@@ -62,8 +62,8 @@ templates to copy into a project and register there.
 In Claude Code:
 
 ```
-/plugin marketplace add MKeSkills/lessons-to-checks
-/plugin install lessons-to-checks@lessons-to-checks
+/plugin marketplace add MKeSkills/make-claude-behave
+/plugin install lessons-to-checks@make-claude-behave
 ```
 
 Claude uses the skill when a task matches it ("this happened again",
@@ -228,7 +228,7 @@ Selling it needs a commercial license from MKeSkills, with a royalty. That
 covers selling the plugin itself, and selling a product or service whose
 value comes mainly from it, such as paid hosting or paid support for it.
 To ask for a commercial license, open an issue at
-https://github.com/MKeSkills/lessons-to-checks/issues.
+https://github.com/MKeSkills/make-claude-behave/issues.
 
 The full terms are in `LICENSE`: the MIT License with the Commons Clause
 condition.

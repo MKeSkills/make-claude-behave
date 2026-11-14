@@ -7,8 +7,8 @@
     "name": "MKeSkills",
     "email": "356721182+MKeSkills@users.noreply.github.com"
   },
-  "homepage": "https://github.com/MKeSkills/lessons-to-checks",
-  "repository": "https://github.com/MKeSkills/lessons-to-checks",
+  "homepage": "https://github.com/MKeSkills/make-claude-behave",
+  "repository": "https://github.com/MKeSkills/make-claude-behave",
   "license": "LicenseRef-MIT-Commons-Clause",
   "keywords": ["lessons", "hooks", "quality", "continuous-improvement", "code-review"]
 }
