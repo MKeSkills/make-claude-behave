@@ -32,6 +32,15 @@ A mention that is negated ("do not build", "never launch a reviewer") or
 reported as past ("the build already ran") is not the work asked for, and
 does not count.
 
+Saves tokens and time: builder agents told nothing about tests each run
+the whole suite on their own part, and the parallel runs slow each other
+down. Only the run on the combined changes counts. An agent asked to start
+another agent may be unable to, and the main session then starts it in
+another round, after a wait. Example: "Fix the date parser in src/dates.py
+and add a test." is refused; with "Run only the tests for src/dates.py; no
+full run." added it goes through. The agent hands back its change after its
+own tests, and the main session runs one full run on the combined changes.
+
 Add a check by adding an entry to CHECKS, plus two cases to the self-test
 (one prompt that must be refused, one similar prompt that must pass). Then
 register the hook in a settings file and see it refuse a harmless prompt
@@ -70,7 +79,8 @@ READ_ONLY_TYPES = {"Explore", "Plan", "claude-code-guide", "statusline-setup"}
 #: A mention that is negated just before it ("do not", "never", up to two
 #: words in between) or reported as past just after it ("already ran").
 NEGATED_BEFORE = re.compile(
-    r"\b(?:do\s+not|don't|never|not|no|without|nor|cannot|can't|must\s+not)\s+(?:\w+\s+){0,2}$",
+    r"\b(?:do\s+not|don['\u2019]t|never|not|no|without|nor|cannot|can['\u2019]t|must\s+not)"
+    r"\s+(?:\w+\s+){0,2}$",
     re.IGNORECASE)
 PAST_AFTER = re.compile(
     r"^\s+(?:already\s+|has\s+|had\s+|was\s+|were\s+)?(?:found|ran|run|reported|said|"
@@ -245,9 +255,22 @@ def log(outcome: str, names: list[str]) -> None:
         pass
 
 
+def read_event() -> object:
+    """The event, read as UTF-8 bytes whatever the console's code page. Read
+    as text on Windows, it would be decoded as cp1252, and every em dash and
+    curly quote would arrive as other characters."""
+    return json.loads(sys.stdin.buffer.read().decode("utf-8"))
+
+
+def answer(payload: dict) -> None:
+    """Write the answer to stdout as UTF-8 whatever the console's code page."""
+    sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
+
+
 def main() -> None:
     try:
-        event = json.load(sys.stdin)
+        event = read_event()
     except ValueError:
         log("error", [])
         return
@@ -261,14 +284,14 @@ def main() -> None:
         return
     log("deny" if found else "pass", [name for name, _ in found])
     if found:
-        print(json.dumps({
+        answer({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": " ".join(
                     f"Refused ({name}): {why}" for name, why in found),
             }
-        }))
+        })
 
 
 if __name__ == "__main__":

@@ -1,5 +1,9 @@
 """Self-test for guard_agent_prompts.py. Run with any Python 3.9+; every line
-says "ok", and the last line is "ok" when all cases pass (exit 0)."""
+says "ok", and the last line is "ok" when all cases pass (exit 0).
+
+The hook gets its input as Claude Code sends it, raw UTF-8 bytes, and one
+check runs it behind a strict cp1252 console, as on Windows (hook_io.py).
+Special characters are built with chr(), so this file holds none itself."""
 
 import json
 import os
@@ -8,7 +12,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # no __pycache__ beside the templates
+from hook_io import behind_cp1252, run_hook
+
 HOOK = Path(__file__).resolve().parent.parent / "guard_agent_prompts.py"
+APOS = chr(0x2019)  # a curly apostrophe, as in "don't"
+LQ, RQ = chr(0x201C), chr(0x201D)  # cp1252 cannot decode the UTF-8 bytes of RQ
 
 NO_FULL = " Run only the targeted tests for what you change; no full run."
 OWN = r" Keep scratch files in C:\tmp\scratchpad\fix-login\ only."
@@ -44,6 +53,7 @@ CASES = [
     ("Agent", {}, "Then kick off a code review of your change.", ["agent starting agents"]),
     ("Agent", {}, "Do not launch a reviewer; hand back, and the main session starts it.", []),
     ("Agent", {}, "Never spawn agents. Summarize the log.", []),
+    ("Agent", {}, f"Don{APOS}t launch a reviewer; hand back, and the main session starts it.", []),
     ("Agent", {}, "Start the agent's work by reading the log.", []),
     # Several at once, and tools the hook does not watch.
     ("Agent", {}, "Build it; put scripts in the scratchpad; then launch a reviewer.",
@@ -52,12 +62,12 @@ CASES = [
 ]
 
 
+def event_for(tool, extra, prompt):
+    return {"tool_name": tool, "tool_input": dict(extra, prompt=prompt), "cwd": os.getcwd()}
+
+
 def run(tool, extra, prompt, log):
-    tool_input = dict(extra, prompt=prompt)
-    event = {"tool_name": tool, "tool_input": tool_input, "cwd": os.getcwd()}
-    env = dict(os.environ, AGENT_GUARD_LOG=log, PYTHONDONTWRITEBYTECODE="1")
-    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
-                          capture_output=True, text=True, env=env)
+    return run_hook(HOOK, event_for(tool, extra, prompt), AGENT_GUARD_LOG=log)
 
 
 def refused_by(out):
@@ -100,6 +110,12 @@ def main():
               and any("\tpass\t" in l for l in lines) and lines[-1].split("\t")[1] == "error")
         bad += not ok
         print("ok  " if ok else "BAD ", f"log has one line per watched call ({len(lines)} of {watched})")
+        # Behind a strict cp1252 console the hook still reads UTF-8.
+        written = behind_cp1252(HOOK, event_for("Agent", {}, f"Build the {LQ}Export{RQ} button."),
+                                AGENT_GUARD_LOG=log)
+        ok = '"deny"' in written and "full runs" in written
+        bad += not ok
+        print("ok  " if ok else "BAD ", "behind a cp1252 console a prompt with curly quotes is read")
         # Unreadable input never blocks.
         out = subprocess.run([sys.executable, str(HOOK)], input="not json",
                              capture_output=True, text=True,

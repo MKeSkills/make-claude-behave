@@ -22,6 +22,15 @@
             "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_agent_prompts.py\""
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_writing_style.py\""
+          }
+        ]
       }
     ],
     "Stop": [

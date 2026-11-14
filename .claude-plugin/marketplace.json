@@ -1,6 +1,6 @@
 {
   "name": "make-claude-behave",
-  "description": "The lessons-to-checks skill: turn each mistake into an enforced check.",
+  "description": "The lessons-to-checks skill: turn each mistake into an enforced check, and save tokens and time on repeated runs and corrections.",
   "owner": {
     "name": "MKeSkills",
     "email": "356721182+MKeSkills@users.noreply.github.com"
@@ -9,7 +9,7 @@
     {
       "name": "lessons-to-checks",
       "source": "./",
-      "description": "Record every mistake as a lesson, build a check that enforces it, prove the check acts, and keep every lesson on record."
+      "description": "Record every mistake as a lesson, build a check that enforces it, prove the check acts, and keep every lesson on record. The checks also save tokens and time by refusing repeated test runs, failed commands and repeated corrections."
     }
   ]
 }

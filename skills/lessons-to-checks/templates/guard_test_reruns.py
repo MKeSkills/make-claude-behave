@@ -37,6 +37,15 @@ Keep logs/, .claude/logs/ and __pycache__/ in .gitignore. The hook leaves
 them out of its comparison anyway (SKIPPED), so its own log and the record
 never count as a change.
 
+Saves tokens and time: a full run's output fills the session, and the
+session waits for the whole suite to finish. A repeated full run only says
+again what the record already holds. The hook refuses that run before it
+starts and names the smaller run that answers the open question. Example:
+the last full run failed 2 tests; since then only their two test files
+changed; a new full run is refused, and the refusal names
+`pytest tests/test_invoices.py tests/test_export.py`. The session waits for
+two test files and reads their output, instead of the whole suite's.
+
 Register it (in .claude/settings.json of the project):
 
     "PreToolUse": [
@@ -367,9 +376,22 @@ def log(outcome: str, names: list[str]) -> None:
         pass
 
 
+def read_event() -> object:
+    """The event, read as UTF-8 bytes whatever the console's code page. Read
+    as text on Windows, it would be decoded as cp1252, and every em dash and
+    curly quote would arrive as other characters."""
+    return json.loads(sys.stdin.buffer.read().decode("utf-8"))
+
+
+def answer(payload: dict) -> None:
+    """Write the answer to stdout as UTF-8 whatever the console's code page."""
+    sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
+
+
 def main() -> None:
     try:
-        event = json.load(sys.stdin)
+        event = read_event()
     except ValueError:
         return
     if not isinstance(event, dict) or event.get("tool_name") not in TOOLS:
@@ -382,13 +404,13 @@ def main() -> None:
         return
     log("deny" if found else "pass", [name for name, _ in found])
     if found:
-        print(json.dumps({
+        answer({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": " ".join(why for _, why in found),
             }
-        }))
+        })
 
 
 if __name__ == "__main__":

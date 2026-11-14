@@ -8,6 +8,16 @@ project, keep your lessons in your own file, such as `docs/lessons.md`.
 
 ## Lessons
 
+- **2025-06-02, a guide was written in LLM-speak.** A setup guide Claude
+  wrote opened with "Rest assured, nothing is lost", used three em dashes,
+  and put most steps in the passive voice. The person rewrote it by hand.
+  The reply check reads only chat replies, so no check read the file. What
+  would implement it: a PreToolUse hook on Write, Edit and MultiEdit for
+  documentation files that refuses these phrases, em dashes and heavy
+  passive voice once, listing each hit with its line and a fix. Status:
+  fixed 2025-06-02, enforced by templates/guard_writing_style.py, seen
+  refusing a Write of "Rest assured, nothing is lost." to a Markdown file.
+
 - **2025-05-19, the whole suite ran again after one test failed.** A full
   run of about 15 minutes failed one test. The fix touched only that test's
   file, and the next step ran the whole suite again: another 15 minutes and

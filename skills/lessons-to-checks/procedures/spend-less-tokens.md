@@ -5,6 +5,12 @@ run of a large test suite, an agent started for a small job, or a big file
 read twice each costs minutes and a share of the session's token budget.
 Most of that cost buys an answer that was already known.
 
+Each step below saves tokens and wall-clock time the same way: it skips a
+run, a read or an agent whose answer is already known, so neither the
+session nor the person waits for it. For example, a full run refused after
+2 failures fixed in test files is replaced by a run of those 2 files, and
+the session waits only for those.
+
 ## Steps
 
 1. **Batch changes into one test cycle.** Build several changes, each with

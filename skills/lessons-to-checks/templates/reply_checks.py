@@ -16,6 +16,13 @@ Optional keys of a check:
 Quoted text (double quotes, block quotes, code) is left out before matching,
 so wording quoted from someone else does not set a check off.
 
+Saves tokens and time: a reply that repeats a corrected habit costs a round
+with the person. They read it, write the correction, and wait for the
+rewrite. Stopped here, it costs one rewrite inside the same turn, before
+the person reads anything. Example: a draft says "it is now 14:05" with no
+clock read in the turn; it is stopped, Claude reads the clock, and the
+person reads the reply once, with the right time in it.
+
 Every run is logged (time, milliseconds, checks fired) so each check's cost
 can be judged at the periodic audit. A check that fires on more than about 1%
 of replies, or mostly on ordinary work, is narrowed or dropped.
@@ -138,10 +145,23 @@ def log(started: float, fired: list[str], note: str = "") -> None:
         pass
 
 
+def read_event() -> object:
+    """The event, read as UTF-8 bytes whatever the console's code page. Read
+    as text on Windows, it would be decoded as cp1252, and every em dash and
+    curly quote would arrive as other characters."""
+    return json.loads(sys.stdin.buffer.read().decode("utf-8"))
+
+
+def answer(payload: dict) -> None:
+    """Write the answer to stdout as UTF-8 whatever the console's code page."""
+    sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
+
+
 def main() -> None:
     started = time.perf_counter()
     try:
-        event = json.load(sys.stdin)
+        event = read_event()
     except ValueError:
         return
     if event.get("stop_hook_active"):
@@ -169,7 +189,7 @@ def main() -> None:
     reason = "Reply checks, before this reply goes out:\n"
     for name, phrases, ask in found:
         reason += f"- {name}: {', '.join(repr(p) for p in phrases)}. {ask}\n"
-    print(json.dumps({"decision": "block", "reason": reason}))
+    answer({"decision": "block", "reason": reason})
 
 
 if __name__ == "__main__":

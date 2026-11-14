@@ -20,6 +20,14 @@ word by word, so rewrapping old text adds no note.
 The check cannot tell whether the changed code is related to the lesson; the
 reviewer of the commit checks that.
 
+Saves tokens and time: a lesson kept only as a note gets missed, and each
+repeat of the mistake costs another round: the mistake, the time to work
+out its cause again, the correction, the rework and its test run. Refusing
+the lesson without its fix gets the check built the first time, so the next
+occurrence is refused at once instead of being diagnosed again. Example: a
+commit that adds only a lesson entry to docs/lessons.md is refused; the
+same commit with the new hook entry and its self-test goes through.
+
 Install as a git hook (`.githooks/commit-msg`, with
 `git config core.hooksPath .githooks`):
 

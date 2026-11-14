@@ -5,6 +5,11 @@ the moment a lesson matters. Each kind of task gets a procedure file (a
 short list of steps), and each procedure ends with the lessons that apply
 to it. A session reads that section before doing the task.
 
+This saves tokens and time: before a task, the session reads the few lines
+that apply to it instead of the whole lessons file. The lesson that applies
+is read at the moment it matters, so its mistake is avoided before it costs
+another round to make, diagnose and fix.
+
 ## Steps
 
 1. **Keep one procedure per kind of task** the project repeats: a release,

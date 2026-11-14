@@ -1,5 +1,9 @@
 """Self-test for guard_shell_habits.py. Run with any Python 3.9+; every line
-says "ok", and the last line is "ok" when all cases pass (exit 0)."""
+says "ok", and the last line is "ok" when all cases pass (exit 0).
+
+The hook gets its input as Claude Code sends it, raw UTF-8 bytes, and one
+check runs it behind a strict cp1252 console, as on Windows (hook_io.py).
+Special characters are built with chr(), so this file holds none itself."""
 
 import json
 import os
@@ -8,7 +12,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # no __pycache__ beside the templates
+from hook_io import behind_cp1252, run_hook
+
 HOOK = Path(__file__).resolve().parent.parent / "guard_shell_habits.py"
+RQ = chr(0x201D)  # a curly closing quote; cp1252 cannot decode its UTF-8 bytes
 
 CASES = [
     # (tool, command, refused?)
@@ -20,15 +28,17 @@ CASES = [
     ("Bash", "sed -i 's/old/new/' notes.txt", True),
     ("Bash", "sed --in-place 's/old/new/' notes.txt", True),
     ("Bash", "sed 's/old/new/' notes.txt > out.txt", False),
+    ("Bash", f"sed -i 's/{RQ}/\"/g' notes.md", True),
     ("Read", "TZ=America/New_York date", False),  # not a shell tool
 ]
 
 
+def event_for(tool, command):
+    return {"tool_name": tool, "tool_input": {"command": command}, "cwd": os.getcwd()}
+
+
 def run(tool, command, log):
-    event = {"tool_name": tool, "tool_input": {"command": command}, "cwd": os.getcwd()}
-    env = dict(os.environ, SHELL_GUARD_LOG=log, PYTHONDONTWRITEBYTECODE="1")
-    return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
-                          capture_output=True, text=True, env=env)
+    return run_hook(HOOK, event_for(tool, command), SHELL_GUARD_LOG=log)
 
 
 def main():
@@ -56,6 +66,12 @@ def main():
               and any("\tpass\t" in l for l in lines))
         bad += not ok
         print("ok  " if ok else "BAD ", f"log has one line per shell call ({len(lines)} lines)")
+        # Behind a strict cp1252 console the hook still reads UTF-8.
+        written = behind_cp1252(HOOK, event_for("Bash", f"sed -i 's/{RQ}/x/' notes.md"),
+                                SHELL_GUARD_LOG=log)
+        ok = '"deny"' in written
+        bad += not ok
+        print("ok  " if ok else "BAD ", "behind a cp1252 console a command with a curly quote is read")
         # Malformed input never blocks.
         out = subprocess.run([sys.executable, str(HOOK)], input="not json",
                              capture_output=True, text=True)

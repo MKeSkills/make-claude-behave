@@ -6,6 +6,14 @@ matches. The reason says what to do instead, so the next attempt can succeed.
 The hook refuses outright ("deny"); it never asks the person, so it adds no
 prompts to routine work.
 
+Saves tokens and time: a command that went wrong before costs the failed
+attempt, a round to find out what went wrong, and the retry. A wrong answer
+that reaches a reply also costs the person the time to spot it and correct
+it. The hook refuses the command before it runs and names the right one,
+so the next attempt is the right one. Example: `TZ=America/New_York date`
+is refused with a pointer to a clock that honors the zone, before the UTC
+time it would print is taken for local time.
+
 Add a habit by adding an entry, plus two cases to the self-test (one command
 that must be refused, one similar command that must pass). Then register the
 hook in a settings file and see it refuse a harmless command that matches it.
@@ -82,9 +90,22 @@ def log(outcome: str, names: list[str]) -> None:
         pass
 
 
+def read_event() -> object:
+    """The event, read as UTF-8 bytes whatever the console's code page. Read
+    as text on Windows, it would be decoded as cp1252, and every em dash and
+    curly quote would arrive as other characters."""
+    return json.loads(sys.stdin.buffer.read().decode("utf-8"))
+
+
+def answer(payload: dict) -> None:
+    """Write the answer to stdout as UTF-8 whatever the console's code page."""
+    sys.stdout.buffer.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+    sys.stdout.buffer.flush()
+
+
 def main() -> None:
     try:
-        event = json.load(sys.stdin)
+        event = read_event()
     except ValueError:
         return
     if event.get("tool_name") not in TOOLS:
@@ -97,14 +118,14 @@ def main() -> None:
         return
     log("deny" if found else "pass", [name for name, _ in found])
     if found:
-        print(json.dumps({
+        answer({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": " ".join(
                     f"Refused ({name}): {why}" for name, why in found),
             }
-        }))
+        })
 
 
 if __name__ == "__main__":

@@ -15,6 +15,13 @@ Registration is necessary, not sufficient: after registering a hook, start a
 new session (or open /hooks) and see it act once on a harmless input that
 matches it.
 
+Saves tokens and time: a hook that no settings file names does nothing, so
+the mistake it was built for comes back, costs another round, and someone
+has to find out why the "fixed" lesson failed. Example: guard_shell_habits.py
+is in .claude/hooks with a passing self-test, but .claude/settings.json does
+not name it; this check prints "UNREGISTERED: guard_shell_habits.py is in
+.claude/hooks but in no settings file" before any session relies on it.
+
 Usage:
     python check_hooks_registered.py --hooks .claude/hooks \\
         --settings .claude/settings.json --settings .claude/settings.local.json

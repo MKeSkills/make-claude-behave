@@ -18,6 +18,12 @@ writes RECORD, relative to the repository's top folder:
   run's commit, with its content's git blob id) are written for a failed run
   only.
 
+Saves tokens and time: this record is what lets guard_test_reruns.py refuse
+a full run that would repeat the last one. With no record, the hook lets
+every run through. Example: a full run passes and writes "passed": true
+with its tree; a second full run on the same files is then refused, and the
+session skips the suite's output and the wait for it.
+
 A run that is not full writes nothing: one given a test file or node id, -k,
 -m, --lf, --deselect, --ignore, a run stopped early (-x, --maxfail), and a
 collect-only run. Under pytest-xdist only the main process writes.

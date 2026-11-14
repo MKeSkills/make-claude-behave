@@ -1,6 +1,6 @@
 ---
 name: lessons-to-checks
-description: A method for turning every mistake or correction into an enforced check, with procedures and runnable templates. Use it whenever something went wrong, a person corrected your work, a tool behaved differently than expected, or a rule was broken again - and when recording, fixing, proving or closing a lesson; building a hook, test or commit check from a lesson; adding a reply check; mapping lessons to task procedures; setting up an independent code or design review; running a periodic audit of lessons, decisions and checks; or spending fewer tokens on test runs and agents ("why did the whole suite run again?"). Also use it to adopt the method in a project ("set up lessons and checks here", "make sure this never happens again", "why did this happen again?").
+description: A method for turning every mistake or correction into an enforced check, with procedures and runnable templates; the checks also save tokens and time by refusing repeated test runs, commands that went wrong before and repeated corrections. Use it whenever something went wrong, a person corrected your work, a tool behaved differently than expected, or a rule was broken again - and when recording, fixing, proving or closing a lesson; building a hook, test or commit check from a lesson; adding a reply check; keeping documents Claude writes free of LLM-speak (em dashes, negative reassurance, heavy passive voice); mapping lessons to task procedures; setting up an independent code or design review; running a periodic audit of lessons, decisions and checks; or spending fewer tokens on test runs and agents ("why did the whole suite run again?"). Also use it to adopt the method in a project ("set up lessons and checks here", "make sure this never happens again", "why did this happen again?").
 ---
 
 # lessons-to-checks
@@ -34,7 +34,8 @@ reply check that stops the reply.
    listed nowhere.
 6. **Stop replies that repeat a corrected writing habit.** A Stop hook
    matches the reply against patterns and stops it once with an
-   instruction; the second attempt goes through.
+   instruction; the second attempt goes through. A PreToolUse hook does the
+   same for documentation files Claude writes (procedures/writing-style.md).
 7. **Have significant changes and designs reviewed** by an agent that has
    not seen the work.
 8. **Audit periodically**: lessons, decisions, checks and their firing
@@ -71,12 +72,14 @@ lessons file and procedures take their place.
    lesson under the procedures it applies to.
 5. [reply-checks](procedures/reply-checks.md): a mistake in how replies are
    written.
-6. [independent-review](procedures/independent-review.md): before
+6. [writing-style](procedures/writing-style.md): a document Claude writes
+   for others to read, or a correction to the wording of one.
+7. [independent-review](procedures/independent-review.md): before
    committing a significant change, or before building a significant
    feature.
-7. [periodic-audit](procedures/periodic-audit.md): a monthly look at
+8. [periodic-audit](procedures/periodic-audit.md): a monthly look at
    lessons, decisions, checks and their cost.
-8. [spend-less-tokens](procedures/spend-less-tokens.md): planning test
+9. [spend-less-tokens](procedures/spend-less-tokens.md): planning test
    runs, batching changes and starting agents, so no run or agent repeats
    an answer already known.
 
@@ -99,6 +102,7 @@ an installed plugin they are in
 | `guard_test_reruns.py` | PreToolUse hook: refuses a full test run on a tree that already passed one, and a full run after a few failures when only tests or documents changed since, naming the files to run; `# full-run-again` lets one through |
 | `conftest_run_record.py` | conftest.py snippet: writes the run record that `guard_test_reruns.py` reads, at the end of each full pytest run |
 | `guard_agent_prompts.py` | PreToolUse hook on the Agent tool: refuses a prompt that asks for code to be built or changed without saying whether the agent runs the full test suite, one that names the shared scratch folder without a subfolder of the agent's own, and one that asks the agent to start another agent; says which line to add; logs every call |
+| `guard_writing_style.py` | PreToolUse hook on Write, Edit and MultiEdit: refuses, once, documentation text with em dashes, negative reassurance, tell words, repeated "X, not Y" contrasts or heavy passive voice, listing each hit with its line and a fix; skips code, URLs, front matter and quotations; the same call sent again passes; logs every call |
 | `settings-example.json` | How the hooks are registered |
 
 To adopt the method in a project, follow the section "Adopt it in a

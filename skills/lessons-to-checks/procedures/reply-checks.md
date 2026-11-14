@@ -14,6 +14,11 @@ rewrites the reply or confirms it. Claude Code marks that second attempt
 (`stop_hook_active`), and the hook lets it through, so it can never loop.
 The check is only as good as that verification.
 
+This saves tokens and time: a reply caught before it goes out costs one
+rewrite inside the same turn. Caught by the person, it costs them reading
+it, writing the correction and waiting for the rewrite, and it costs Claude
+another round.
+
 ## Steps
 
 1. **Use it for a writing mistake that has happened once** and that

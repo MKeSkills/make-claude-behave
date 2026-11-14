@@ -18,6 +18,13 @@ listed nowhere is never read when it matters. This check prints:
   or a lesson renamed in one place only), and
   "NO SECTION: <procedure>" for a procedure without the section; exit 1.
 
+Saves tokens and time: a session reads the few lines under a task's
+procedure instead of the whole lessons file, and this check keeps that
+short list complete. A lesson listed nowhere is missed when its task comes
+up, and its mistake costs another round to make, diagnose and fix. Example:
+a new lesson about time zones, listed under no procedure, makes this check
+print "MISSING: 2025-01-14, a script stated the wrong time zone".
+
 Names are compared with whitespace collapsed and a final period dropped, so
 a name wrapped over two lines still matches.
 

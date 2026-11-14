@@ -1,8 +1,14 @@
 # Build the check
 
 Use this right after recording a lesson, or when a lesson's check turned out
-too weak. The fix is built when the lesson is recorded, not when the mistake
-repeats.
+too weak. Build the fix when you record the lesson, before the mistake can
+repeat.
+
+A check built now saves tokens and time on every later occurrence. The
+mistake is refused at once, which skips the round spent making it, working
+out its cause again, correcting it and testing the rework. For example, a
+refused `TZ=America/New_York date` costs one short refusal. Run unchecked,
+it would cost a wrong time in a report and the search for why.
 
 ## Steps
 

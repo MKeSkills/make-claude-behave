@@ -1,14 +1,22 @@
 """Self-test for reply_checks.py. Run with any Python 3.9+; every line says
-"ok", and the last line is "ok" when all cases pass (exit 0)."""
+"ok", and the last line is "ok" when all cases pass (exit 0).
+
+The hook gets its input as Claude Code sends it, raw UTF-8 bytes, and one
+check runs it behind a strict cp1252 console, as on Windows (hook_io.py).
+Special characters are built with chr(), so this file holds none itself."""
 
 import json
 import os
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # no __pycache__ beside the templates
+from hook_io import behind_cp1252, run_hook
+
 HOOK = Path(__file__).resolve().parent.parent / "reply_checks.py"
+LQ, RQ = chr(0x201C), chr(0x201D)  # cp1252 cannot decode the UTF-8 bytes of RQ
+CURLY_QUOTED = f"The guide{chr(0x2019)}s example reads {LQ}you decided to skip it{RQ}."
 
 
 def transcript(folder, reply, tool_inputs=()):
@@ -32,9 +40,7 @@ def transcript(folder, reply, tool_inputs=()):
 
 
 def run(event, log):
-    env = dict(os.environ, REPLY_CHECKS_LOG=log, PYTHONDONTWRITEBYTECODE="1")
-    out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
-                         capture_output=True, text=True, env=env)
+    out = run_hook(HOOK, event, REPLY_CHECKS_LOG=log)
     return json.loads(out.stdout) if out.stdout.strip() else None
 
 
@@ -74,13 +80,24 @@ def main():
         ok = bool(result) and "clock" in result["reason"]
         bad += not ok
         print("ok  " if ok else "BAD ", "last_assistant_message is checked; the reason says what to verify")
+        # Words in curly quotes are left out, as Claude Code sends them.
+        result = run({"last_assistant_message": CURLY_QUOTED}, log)
+        ok = result is None
+        bad += not ok
+        print("ok  " if ok else "BAD ", "words in curly quotes, sent as UTF-8, do not stop the reply")
         # Every run is logged, the second attempt marked.
         lines = Path(log).read_text(encoding="utf-8").splitlines()
-        ok = (len(lines) == len(CASES) + 2
+        ok = (len(lines) == len(CASES) + 3
               and any("second attempt" in l for l in lines)
               and any("current time stated" in l for l in lines))
         bad += not ok
         print("ok  " if ok else "BAD ", f"log has one line per run ({len(lines)} lines)")
+        # Behind a strict cp1252 console the hook still reads UTF-8.
+        written = behind_cp1252(HOOK, {"last_assistant_message": "You decided to skip it. "
+                                       + CURLY_QUOTED}, REPLY_CHECKS_LOG=log)
+        ok = '"block"' in written and "decision attributed" in written
+        bad += not ok
+        print("ok  " if ok else "BAD ", "behind a cp1252 console a reply with curly quotes is read")
     print("ok" if not bad else f"FAILED ({bad})")
     return 1 if bad else 0
 

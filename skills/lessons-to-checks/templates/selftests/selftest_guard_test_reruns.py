@@ -3,7 +3,10 @@ line says "ok", and the last line is "ok" when all cases pass (exit 0).
 
 It builds a throwaway git repository, writes run records into it the way
 conftest_run_record.py does, and sends the hook the commands a session
-would send."""
+would send. The repository's folder name holds an accented letter, built with
+chr(), and the hook gets its input as Claude Code sends it, raw UTF-8 bytes;
+one check runs it behind a strict cp1252 console, as on Windows
+(hook_io.py)."""
 
 import json
 import os
@@ -13,11 +16,17 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.dont_write_bytecode = True  # no __pycache__ beside the templates
+from hook_io import behind_cp1252, run_hook
+
 HERE = Path(__file__).resolve().parent
 HOOK = HERE.parent / "guard_test_reruns.py"
 sys.path.insert(0, str(HERE.parent))
-sys.dont_write_bytecode = True
 import guard_test_reruns as guard  # noqa: E402
+
+#: The repository's folder: "repo-cafe" with an accented e, as in a user
+#: folder named after a person.
+REPO_NAME = "repo-caf" + chr(0xE9)
 
 
 def git(repo, *args):
@@ -40,12 +49,12 @@ def record(repo, **fields):
     write(repo, guard.RECORD, json.dumps(fields))
 
 
+def event_for(tool, command, cwd):
+    return {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(cwd)}
+
+
 def hook(tool, command, cwd, log):
-    event = {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(cwd)}
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
-    env.update(TEST_RERUN_GUARD_LOG=log, PYTHONDONTWRITEBYTECODE="1")
-    out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
-                         capture_output=True, text=True, env=env)
+    out = run_hook(HOOK, event_for(tool, command, cwd), TEST_RERUN_GUARD_LOG=log)
     if out.returncode != 0:
         return "crash", out.stderr
     if not out.stdout.strip():
@@ -76,7 +85,7 @@ class Run:
 
 def main():
     with tempfile.TemporaryDirectory() as tmp:
-        repo = Path(tmp) / "repo"
+        repo = Path(tmp) / REPO_NAME
         repo.mkdir()
         log = str(Path(tmp) / "guard.log")
         run = Run(log)
@@ -103,6 +112,10 @@ def main():
         ]:
             run.expect("same tree: a full run is refused", tool, command, repo, True,
                        "same tree", "# full-run-again")
+        written = behind_cp1252(HOOK, event_for("Bash", "pytest", repo), TEST_RERUN_GUARD_LOG=log)
+        run.calls += 1
+        run.check("behind a cp1252 console the accented folder name is read",
+                  '"deny"' in written, written)
         for tool, command in [
             ("Bash", "pytest tests/test_a.py"),
             ("Bash", "pytest tests/test_a.py::test_one"),
