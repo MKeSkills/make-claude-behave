@@ -1,269 +1,324 @@
 # Continuous improvement built-in: lessons-to-programmed checks
 
-A Claude Code plugin with one skill: a method for turning every mistake or
-correction into a check that acts on its own.
+lessons-to-checks is a Claude Code plugin with one skill. The skill teaches
+Claude to turn every mistake it makes, and every correction you give it,
+into a check that acts on its own the next time.
 
-A mistake that is only written down tends to happen again. The next session
-does not read the note at the moment it matters. This skill has Claude
-record each mistake as a lesson and build its fix right away, as a hook, a
-test or a commit check. Claude then proves the fix by seeing it act, and
-keeps every lesson on record. The same checks save tokens and time: they
-stop work whose answer is already known, such as a second full test run on
-unchanged files or a mistake corrected a second time ("Where it saves
-tokens and time" below).
+Most people write a mistake down as a note and move on. The note rarely
+helps, because the next session doesn't read it at the moment the mistake
+is about to happen, and the mistake comes back. With this skill, Claude
+records each mistake as a lesson and builds its fix right away, as a hook,
+a test or a commit check. A hook is a small script that Claude Code runs
+before or after a tool call, and it can stop the call. Claude then proves
+that the fix works by watching it catch the mistake once, and it keeps
+every lesson on record.
+
+The same checks save you tokens and time. They stop Claude before it
+starts work whose result you already know, such as a second full test run
+on files that haven't changed, or a mistake you already corrected once.
+The next section goes through each check, with an example of what it
+saves.
 
 ## Where it saves tokens and time
 
-A session spends many of its tokens, and much of its time, on work whose
-answer is already known: a test run that repeats successful tests from previous run, a command
-that went wrong before and runs again, or a habit the person has to
-correct a second time. Each mechanism below stops one of these before it
-starts. Every hook logs each time it acts, so the periodic audit can count
-how often it did.
+Every exchange in a Claude Code session costs tokens, and most of them
+cost time as well: you wait while Claude works, and Claude waits while you
+read and answer. Many of those exchanges produce a result you could have
+predicted. Three kinds come up most often:
 
-A "round" below means one more exchange: a tool call and its output, or a
-reply and the person's answer to it. Each round costs tokens, and it costs
-time while Claude works and while the person reads and answers.
+- Claude runs the full test suite again, and the tests that passed in the
+  previous run pass again.
+- Claude runs a command that went wrong in an earlier session, and it goes
+  wrong the same way.
+- Claude repeats a habit you already corrected, and you spend another
+  message correcting it.
+
+Each check below stops one of these before it starts, so neither you nor
+Claude spends anything on it. Every hook also writes a line to its log
+each time it acts. When you review your checks, the log shows how often
+each one saved you a round, and whether it still earns its place.
+
+This section uses the word "round" for one extra exchange: a tool call and
+its output, or a reply from Claude and your answer to it. Each round costs
+tokens. It also costs time, both while Claude works and while you read and
+respond.
 
 ### A full test run that repeats the last one
 
 `guard_test_reruns.py`, with `conftest_run_record.py`.
 
-**Where the tokens and time go.** A full run of a large test suite is slow,
-the session waits for it, and its output fills the session. A session often
-starts another full run that can only say the same thing: on files that
-have not changed, or after fixing one failed test.
+**Without the check.** A full run of a large test suite can take many
+minutes. The session waits for it to finish, and its output takes up room
+in the conversation, which Claude pays for in tokens on every later turn.
+Sessions often start another full run that can only repeat what the last
+one said. Either the files haven't changed since a run that passed, or
+Claude fixed the one or two tests that failed and wants to confirm the
+fix.
 
-**How the skill saves them.** The conftest snippet records each full run:
-whether it passed, the commit and the uncommitted changes it ran on, and
-the tests that failed. The hook reads that record before a full run
-starts. It refuses a second full run on a tree that already passed one. It
-also refuses a full run after a few failures when only tests or documents
-changed since, and names the test files to run instead. A comment in the
-command, `# full-run-again`, lets a needed full run through.
+**With the check.** The conftest snippet writes a short record at the end
+of every full run: whether the run passed, the commit and uncommitted
+changes it ran on, and the tests that failed. Before Claude starts a full
+run, the hook reads that record. If the files match a run that passed, the
+hook refuses the new run. If the last run failed a few tests and only test
+files or documents have changed since, the hook also refuses the full run,
+and names the test files Claude should run instead. When a full run really
+is needed, Claude adds the comment `# full-run-again` to the command, and
+the hook lets it through.
 
 **Example.** The last full run failed 2 tests, one in
-`tests/test_invoices.py` and one in `tests/test_export.py`. Since then,
-only those two test files changed. The hook refuses a new full run, and
-its refusal says to run
-`pytest tests/test_invoices.py tests/test_export.py`. The session waits
-for two test files instead of the whole suite, and reads two files'
-output.
+`tests/test_invoices.py` and one in `tests/test_export.py`. Claude fixes
+both, and changes only those two test files. When Claude tries to start a
+new full run, the hook refuses it and tells Claude to run
+`pytest tests/test_invoices.py tests/test_export.py`. You wait for two test
+files instead of the whole suite, and Claude reads the output of two files
+instead of the whole suite's.
 
 ### Agents that each run the whole suite
 
 `guard_agent_prompts.py`.
 
-**Where the tokens and time go.** Three builder agents work at the same
-time, each on one part of a change. Their prompts say nothing about tests,
-so each agent runs the full suite on its own part. Only the run on the
-combined changes counts, and that run has to happen anyway. The parallel
-runs also compete for the same machine, so every agent finishes later. An
-agent asked to start a review agent may be unable to. It reports back, and
-the main session starts the review in another round, after a wait.
+**Without the check.** Claude often splits a change among several builder
+agents that work at the same time, each on one part. If their prompts say
+nothing about testing, each agent runs the full suite on its own part.
+Only the final run on the combined changes tells you whether the parts
+work together, and that run has to happen anyway, so the agents' own full
+runs add nothing. They also compete for the same processor and memory, so
+every agent finishes later. A second waste: Claude sometimes asks an agent
+to start a review agent of its own, and a background agent may be unable
+to. The agent reports back that it couldn't, and the main session starts
+the review itself, one round and one wait later.
 
-**How the skill saves them.** The hook refuses an agent prompt that asks
-for code to be built or changed without saying whether the agent runs the
-full suite. The refusal says which line to add. The hook also refuses a
-prompt that asks the agent to start another agent, so the main session
-starts every agent itself.
+**With the check.** The hook reads every agent prompt before the agent
+starts. It refuses a prompt that asks the agent to build or change code
+without saying whether the agent runs the full suite, and its refusal
+gives the line to add. It also refuses a prompt that asks the agent to
+start another agent, so the main session starts every agent itself, the
+first time.
 
 **Example.** The hook refuses the prompt "Fix the date parser in
-src/dates.py and add a test." With the line "Run only the tests for
-src/dates.py; no full run." added, it goes through. The agent hands back
-its change after its own tests. The main session runs one full run once
-every part is back.
+src/dates.py and add a test." Claude adds the line "Run only the tests for
+src/dates.py; no full run.", and the hook lets the prompt through. The
+agent runs only the date parser's tests and hands back its change. Once
+every agent has reported, the main session runs the full suite one time,
+on the combined changes. With three agents, that is one full run where
+there would have been four.
 
 ### A command that went wrong before
 
 `guard_shell_habits.py`.
 
-**Where the tokens and time go.** A command that went wrong before runs
-again. It fails, or it gives a wrong answer that looks right. The session
-spends a round on the failed attempt, a round finding out what went wrong,
-and another running the right command. A wrong answer that reaches a reply
-also costs the person the time to spot it and write a correction.
+**Without the check.** Claude runs a command that went wrong in an
+earlier session. Either it fails again, or it returns a wrong answer that
+looks right. A failure costs three rounds: the failed attempt, the work to
+find out what went wrong, and the run of the right command. A wrong answer
+that looks right can cost more. It reaches a reply or a report, and you
+have to spot the mistake and write a correction.
 
-**How the skill saves them.** The hook matches each command against the
-habits recorded as lessons, and refuses a match before it runs. The
-refusal names the command to use, so the next attempt is the right one.
-This skips the failed attempt, its diagnosis and the retry.
+**With the check.** When a command goes wrong in a way that can happen
+again, Claude records it as a lesson and adds a pattern for it to the
+hook. Before any shell command runs, the hook compares it with those
+patterns. When one matches, the hook refuses the command and names the
+command to use instead. Claude's next attempt is the right one, and you
+save the failed attempt, the search for its cause and the retry.
 
-**Example.** On a shell with no time-zone database,
+**Example.** On a shell without a time-zone database,
 `TZ=America/New_York date` prints UTC as if it were New York time. The
-hook refuses the command and names a clock that honors the zone. So the
-first time the session reads is the correct local time. A report built on
-it gives the right hour the first time.
+hook refuses the command and names a clock that honors the time zone. The
+first time Claude reads is the correct local time, and a report built on
+it states the right hour from the start.
 
-### A reply that repeats a corrected habit
+### A reply that repeats a habit you corrected
 
 `reply_checks.py`.
 
-**Where the tokens and time go.** A reply repeats a habit the person
-already corrected, such as stating the time without reading the clock. The
-person reads it, writes the correction, and waits while Claude rewrites the
-reply. That is a full round of tokens, and the person's time for each step.
+**Without the check.** You corrected a habit, such as stating the time
+without reading the clock, and a later reply does it again. You read the
+reply, notice the mistake, write the correction, and wait while Claude
+rewrites it. That costs a full round of tokens, and your time at every
+step.
 
-**How the skill saves them.** The Stop hook reads each reply before the
-person sees it. When a pattern matches, it stops the reply once and says
-what to verify. The fix is one rewrite inside the same turn, before the
-person reads anything. The second attempt always goes through, so the check
-cannot loop.
+**With the check.** A Stop hook runs each time Claude finishes a reply,
+before you see it. When the reply matches the pattern of a habit you
+corrected, the hook holds it back once and tells Claude what to check.
+Claude fixes the reply in the same turn, before you read anything. The
+hook lets Claude's second attempt through in every case, so a false match
+costs one rewrite and the check can't loop.
 
-**Example.** A draft reply says "it is now 14:05", and no tool call in the
-turn read the clock. The hook stops it. Claude reads the clock and corrects
-the time. The person reads the corrected reply once, with the right time
-in it.
+**Example.** A draft reply says "it is now 14:05", and no tool call in
+that turn read the clock. The hook holds the reply back. Claude reads the
+clock and corrects the time. You read one reply, with the right time in
+it, and write no correction.
 
 ### A fix that exists only on paper
 
 `check_lesson_commit.py`, `check_hooks_registered.py` and
 `check_lessons_mapped.py`.
 
-**Where the tokens and time go.** A lesson kept only as a note gets missed.
-Each repeat of the mistake costs another round: the mistake, the time to
-work out its cause again, the correction, the rework and its test run. A
-hook that is built and tested but named in no settings file does nothing,
-so the mistake repeats while the lesson reads "fixed". A lesson listed
-under no procedure is not read when its task comes up.
+**Without the check.** A lesson kept only as a note gets missed at the
+moment it matters. Each time the mistake repeats, you pay for it again:
+the mistake itself, the time to work out its cause a second time, the
+correction, the rework and the test run after it. Two quieter gaps cost
+the same way. A hook that someone built and tested but never named in a
+settings file never runs, so the mistake repeats while the lesson says
+"fixed". A lesson that no procedure lists stays unread when its task comes
+up.
 
-**How the skill saves them.**
+**With the check.**
 
 - `check_lesson_commit.py` refuses a commit that adds a lesson without
-  changing a hook, test, script or other code, unless the message says why
-  no check is possible. The fix is built the first time, so the next
-  occurrence is refused at once instead of being diagnosed again.
+  changing a hook, test, script or other code, unless the commit message
+  explains why no check is possible. Claude builds the fix the first time
+  the mistake happens, so the next occurrence meets a refusal at once, and
+  nobody has to work out its cause again.
 - `check_hooks_registered.py` prints `UNREGISTERED` for each hook script
   that no settings file names.
-- `check_lessons_mapped.py` prints `MISSING` for each lesson listed under
-  no procedure.
+- `check_lessons_mapped.py` prints `MISSING` for each lesson that no
+  procedure lists.
 
-**Example.** `guard_shell_habits.py` is copied into `.claude/hooks/` and
-its self-test passes, but `.claude/settings.json` does not name it. The
-registration check prints `UNREGISTERED: guard_shell_habits.py is in
-.claude/hooks but in no settings file`. The gap shows up in one check,
-before a session relies on a hook that never runs and someone has to find
-out why the mistake came back.
+**Example.** You copy `guard_shell_habits.py` into `.claude/hooks/` and
+its self-test passes, but `.claude/settings.json` doesn't name it, so
+Claude Code never runs it. The registration check prints
+`UNREGISTERED: guard_shell_habits.py is in .claude/hooks but in no
+settings file`. One command shows you the gap, before a session relies on
+a hook that never runs and someone has to work out why the mistake came
+back.
 
-### A document the person has to rewrite
+### A document you have to rewrite
 
 `guard_writing_style.py`.
 
-**Where the tokens and time go.** Claude writes a guide full of phrases
-that mark generated text: "rest assured", em dashes, sentence after
-sentence in the passive voice. The person reads it, marks the phrases,
-writes the correction and waits for the rewrite. The rewrite costs another
-round, and the same phrases come back in the next document.
+**Without the check.** Claude writes a guide full of phrases that readers
+recognize as machine-written: "rest assured", em dashes, sentence after
+sentence in the passive voice. You read it, mark the phrases, write the
+correction and wait for the rewrite. The rewrite costs another round, and
+the same phrases come back in the next document.
 
-**How the skill saves them.** The hook reads the text before the file is
-written, and refuses it once with each hit's line and a fix. Claude
-rewrites it in the same turn, before anyone reads the file.
+**With the check.** The hook reads the text before Claude writes the file.
+When it finds such phrases, it refuses the write once and lists each one
+with its line number and a suggested fix. Claude rewrites the text in the
+same turn, before anyone opens the file.
 
-**Example.** A Write of `docs/setup.md` says "Rest assured, nothing is lost
-when you close the window." The hook refuses it and names line 3. Claude
-writes "The draft stays in your outbox when you close the window." The
-person reads the guide once. ("How it keeps generated documents free of
-LLM-speak" below has the details.)
+**Example.** A Write of `docs/setup.md` says "Rest assured, nothing is
+lost when you close the window." The hook refuses it and names line 3.
+Claude writes "The draft stays in your outbox when you close the window."
+You read the guide once and send no corrections. ("How it keeps generated
+documents free of LLM-speak" below has the details.)
 
 ### A long lessons file read before every task
 
 The "Lessons that apply here" section at the end of each procedure.
 
-**Where the tokens and time go.** A lessons file grows with every mistake.
-Reading all of it before each task spends tokens and time on lessons that
-do not apply. Skipping it misses the one that does.
+**Without the check.** A lessons file grows with every mistake. If Claude
+reads all of it before each task, it spends tokens and time on lessons
+that have nothing to do with the task. If Claude skips it, it misses the
+one lesson that does apply.
 
-**How the skill saves them.** Each procedure ends with one to three lines
-per lesson that applies to its task: what to do instead, and the check
-that enforces it. A session reads that short list before the task.
+**With the check.** Each procedure in the skill ends with a short section,
+"Lessons that apply here". It holds one to three lines for each lesson
+that matters to that task: what to do instead, and which check enforces
+it. Claude reads that short list before it starts the task, and leaves
+the rest of the lessons file unread.
 
 **Example.** In this skill, `procedures/spend-less-tokens.md` lists 4 of
-the 14 example lessons in `lessons.md`. A session planning test runs reads
-those 4 entries and starts the task.
+the 14 example lessons in `lessons.md`. Before it plans test runs, Claude
+reads those 4 entries and then starts the task.
 
-### The other steps in spend-less-tokens.md
+### Other habits in spend-less-tokens.md
 
-`procedures/spend-less-tokens.md` has more steps. They are habits to
-follow, and the skill has no template for them.
+`procedures/spend-less-tokens.md` describes more ways to save tokens and
+time. These are habits Claude follows, and the skill has no check for
+them.
 
-- **Batch changes into one test cycle.** Example: three small fixes are
-  built, each with its own targeted tests. One full run checks the
-  combined changes before they are committed together. The session waits
-  for one full run.
-- **Run slow tests only when the files they exercise changed.** Example: a
-  slow test that runs a deploy script is tied to that script in a table.
-  When only a page file changed, the run skips that test and says why, and
-  the run finishes without waiting for it.
-- **Restart a killed run from where it stopped, with fewer workers.**
-  Example: a run with 8 workers runs out of memory after 300 tests passed.
-  The restart uses 4 workers and runs only the tests that had not passed,
-  so the session waits only for those.
-- **Start an agent only for independent or large work.** Example: Claude
-  makes a one-line fix in a file already open itself. Briefing an agent
-  for it, and waiting for its report, costs more than the edit.
-- **Read a big file once, by the lines you need.** Example: search for the
-  function, read its lines, and reuse what they said later in the session.
+- **Test several changes together.** Example: Claude builds three small
+  fixes, each with its own targeted tests. One full run then checks the
+  three fixes together before Claude commits them. You wait for one full
+  run where there would have been three.
+- **Run slow tests only when the files they exercise have changed.**
+  Example: a slow test runs a deploy script, and a table ties the test to
+  that script. When only a page file has changed, the test run skips that
+  test and says why, and you don't wait for it.
+- **Restart a killed test run from where it stopped, with fewer workers.**
+  Example: a run with 8 parallel workers runs out of memory after 300
+  tests have passed. Claude restarts it with 4 workers and runs only the
+  tests that had not passed yet, so you wait only for those.
+- **Start an agent only for independent or large work.** Example: for a
+  one-line fix in a file Claude already has open, Claude makes the edit
+  itself. Writing a briefing for an agent and waiting for its report would
+  cost more than the edit.
+- **Read a large file once, and only the lines you need.** Example: Claude
+  searches for the function, reads its lines, and reuses what it learned
+  later in the session instead of reading the file again.
 
 ## How it keeps generated documents free of LLM-speak
 
-Two templates read what Claude writes before anyone else does.
-`guard_writing_style.py` reads documentation files before Claude writes
-them. `reply_checks.py` reads chat replies before the person sees them.
+Readers notice phrases that sound machine-written, and you end up
+rewriting them by hand. Two templates read Claude's writing before anyone
+else does. `guard_writing_style.py` reads documentation files before
+Claude writes them, and `reply_checks.py` reads chat replies before you
+see them.
 
 ### guard_writing_style.py: documentation files
 
-A PreToolUse hook on the Write, Edit and MultiEdit tools. It reads files
-whose extension is in `DOC_EXTENSIONS`: `.md`, `.markdown` and `.rst` by
-default. Add `.txt` if your plain-text files are documents people read. It
-never reads license files (`LICENSE`, `LICENSE.md`, `LICENCE.txt` and the
-like), whose wording is fixed. For a Write it reads the whole new content.
-For an Edit or MultiEdit it reads only the new text, so older text in the
-file never counts against an edit.
+A PreToolUse hook on the Write, Edit and MultiEdit tools. Claude Code runs
+a PreToolUse hook before it carries out the tool call, and the hook can
+stop the call. This one checks files whose extension is in
+`DOC_EXTENSIONS`: `.md`, `.markdown` and `.rst` by default. Add `.txt` if
+your plain-text files are documents people read. It skips license files
+(`LICENSE`, `LICENSE.md`, `LICENCE.txt` and the like), because their
+wording is fixed. For a Write, it checks the whole new content. For an
+Edit or MultiEdit, it checks only the new text, so older text already in
+the file never counts against an edit.
 
 It catches:
 
-- em dashes, and en dashes used as dashes (a range such as pages 10 to 20
-  written with an en dash passes);
+- em dashes, and en dashes used as dashes. An en dash in a range, such as
+  pages 10 to 20, passes;
 - negative reassurance: "nothing is lost", "nothing happens", "no
   surprises", "rest assured", "pay nothing", "don't worry", and "simply"
   or "just" used to play a step down ("simply run", "just click");
 - tell words: "silently", "seamless", "leverage", "delve", "robust",
   "moat", "legible" and "honestly";
-- "X, not Y" contrasts, when a text holds 2 or more and at least one for
-  every 15 sentences (`MIN_CONTRASTS`, `SENTENCES_PER_CONTRAST`). Two in a
-  short note are listed; three in a README of 300 sentences pass;
+- "X, not Y" contrasts, when a text holds 2 or more of them and at least
+  one for every 15 sentences (`MIN_CONTRASTS`, `SENTENCES_PER_CONTRAST`).
+  The hook lists two in a short note, and lets three in a README of 300
+  sentences pass;
 - heavy use of the passive voice: a form of "be" or "get" followed by a
   past participle ("is refused", "gets deleted"), in 3 or more sentences
   that make up at least a quarter of all sentences. A step that starts
-  with a verb ("Run in a terminal.", "Set to 5 by default.") is not
-  passive, and a passive kept where the doer does not matter passes.
+  with a verb ("Run in a terminal.", "Set to 5 by default.") doesn't count
+  as passive. Where the doer really doesn't matter, you can keep a passive
+  sentence by sending the same call again.
 
-Before matching, it leaves out front matter, fenced and indented code
-blocks, inline code, URLs, link targets, HTML tags and comments, block
-quotes and text in double quotes, straight or curly. A fence or comment
-left open runs to the end of the text. A quotation that quotes words of
-its own is left out whole. For an Edit, it reads the file to see whether
-the text being replaced sits inside a fenced block or an HTML comment, and
-treats the new text the same way. Documents quote people word for word,
-and a quotation keeps its own words. Text in single quotes is read,
-because a single quote is also an apostrophe. It has no check for
+Before it looks for these patterns, the hook removes text it shouldn't
+judge: front matter, fenced and indented code blocks, inline code, URLs,
+link targets, HTML tags and comments, block quotes, and text in double
+quotes, straight or curly. A fence or comment that never closes runs to
+the end of the text. When a quotation holds a quotation of its own, the
+hook leaves out the whole outer quotation. For an Edit, the hook reads the
+file to see whether the text the Edit replaces sits inside a fenced block
+or an HTML comment, and treats the new text the same way. It leaves
+quotations alone because documents quote people word for word, and a
+quotation keeps the speaker's own words. It does read text in single
+quotes, because a single quote is also an apostrophe. It has no check for
 aphoristic closing lines ("Small steps, big wins."), because no pattern
-tells them apart from an ordinary short sentence. Keep a rule about them
-in the project's `CLAUDE.md`.
+can tell them apart from an ordinary short sentence. Keep a rule about
+them in the project's `CLAUDE.md` instead.
 
-It reads its input as UTF-8 bytes and writes its answer as UTF-8. On
-Windows, Python would otherwise decode the input with the console's code
-page (cp1252), and every em dash and curly quote would arrive as other
-characters. The other hook templates read and write the same way.
+It reads its input as UTF-8 bytes and writes its answer as UTF-8. Without
+that, Python on Windows decodes the input with the console's code page
+(cp1252), every em dash and curly quote arrives as different characters,
+and the hook misses them. The other hook templates read and write the
+same way.
 
-On a hit, it refuses the call once and lists each hit with its line and a
-fix. The identical call sent again passes, so a phrase kept on purpose
-costs one resend. The hook keeps a hash of each refused call in a small
-state file for this. Its log holds one JSON line per call, with each hit's
-check, line and matched text and the call's hash, so a short report script
-can count, per check, the refusals and how many were sent again unchanged:
-those are likely false positives, and a check with many of them needs
-narrowing.
+When it finds something, it refuses the call once and lists each hit with
+its line number and a fix. If Claude sends the identical call again, the
+hook lets it through, so a phrase you keep on purpose costs one resend.
+To recognize the repeat, the hook keeps a hash of each refused call in a
+small state file. Its log holds one JSON line per call, with each hit's
+check, line and matched text, and the call's hash. With a short script,
+you can count for each check how many calls it refused and how many Claude
+sent again unchanged. Those resends are likely false positives, and a
+check with many of them needs narrowing.
 
 Before, a Write of `docs/setup.md`:
 
@@ -285,7 +340,7 @@ negative reassurance:
 Rewrite these, then write again. If every one is meant (a quotation, a passive where the doer does not matter), send the same call again unchanged and it will pass.
 ```
 
-After, the rewrite that goes through:
+After the rewrite, the hook lets the write through:
 
 ```
 # Setup
@@ -296,12 +351,14 @@ Run the installer.
 
 ### reply_checks.py: chat replies
 
-A Stop hook. Its `CHECKS` list holds pairs of a pattern and an instruction.
-When a reply matches, the hook stops it once and tells Claude what to fix;
-the second attempt always goes through. The template ships with two
-checks: a current time stated with no clock read, and a decision
-attributed to the person. Add the phrases you correct in replies the same
-way, for example:
+A Stop hook, which Claude Code runs each time Claude finishes a reply. Its
+`CHECKS` list holds pairs of a pattern and an instruction. When a reply
+matches a pattern, the hook holds the reply back once and tells Claude
+what to fix. Claude's second attempt always goes through. The template
+comes with two checks: a reply that states the current time without
+reading the clock, and a reply that says you decided or asked for
+something. Add the phrases you find yourself correcting in the same form,
+for example:
 
 ```python
 {
@@ -311,13 +368,13 @@ way, for example:
 },
 ```
 
-Before, with that entry added, a reply ends:
+With that entry added, suppose a draft reply ends:
 
 ```
 I moved the settings to the new file. Rest assured, nothing is lost.
 ```
 
-The hook stops it once. After, the reply the person reads:
+The hook holds it back once. The reply you read:
 
 ```
 I moved the settings to the new file. The old file keeps a copy until you delete it.
@@ -326,35 +383,36 @@ I moved the settings to the new file. The old file keeps a copy until you delete
 ### Adding a project's own phrases
 
 1. In `guard_writing_style.py`, add a pair of a pattern and a fix to the
-   matching list: `NEGATIVE_REASSURANCE`, `TELL_WORDS`, `DASHES` or
-   `CONTRASTS`. Add file types to `DOC_EXTENSIONS`, and paths it must
-   never check (a vendored file, a copied changelog) to `SKIPPED_PATHS`.
+   list it belongs in: `NEGATIVE_REASSURANCE`, `TELL_WORDS`, `DASHES` or
+   `CONTRASTS`. Add file types to `DOC_EXTENSIONS`, and add paths the hook
+   must skip (a vendored file, a copied changelog) to `SKIPPED_PATHS`.
 2. In `reply_checks.py`, add an entry to `CHECKS` for the same phrase in
    replies.
-3. Add two self-test cases for each: a text that must be refused, and a
-   similar one that must pass. Run
+3. Add two self-test cases for each: a text the hook must refuse, and a
+   similar one it must let through. Run
    `python skills/lessons-to-checks/templates/selftests/run_all.py`.
-4. Record the correction as a lesson and list it under the writing-style
+4. Record the correction as a lesson, and list it under the writing-style
    procedure (`procedures/writing-style.md`).
 
 ## What is in it
 
 - **The method** (`skills/lessons-to-checks/SKILL.md`):
-  1. Record every mistake or correction at once, as a lesson: what
-     happened, and what would implement the fix.
-  2. Build the fix when the lesson is recorded, as a check that acts on its
-     own: a hook, a test or a commit check. A note alone only when no check
-     is possible, with the reason.
-  3. Prove the fix by seeing it act before marking the lesson fixed. A hook
-     is registered in a settings file and seen firing in a session.
+  1. Record every mistake or correction as a lesson right away: what
+     happened, and what would fix it.
+  2. Build the fix when you record the lesson, as a check that acts on its
+     own: a hook, a test or a commit check. Settle for a written note only
+     when no check is possible, and say why.
+  3. Before marking a lesson fixed, prove the fix works by seeing it act.
+     For a hook, that means a settings file names it and you have seen it
+     fire in a session.
   4. Never delete a lesson. Mark it fixed or canceled.
-  5. List each lesson under the task procedures it applies to. A test fails
-     when one is listed nowhere.
-  6. Stop a reply that repeats a corrected writing habit, once, with a reply
-     check.
-  7. Have significant changes and designs reviewed by an agent that has not
-     seen the work.
-  8. Audit lessons, decisions and checks periodically.
+  5. List each lesson under every task procedure it applies to. A test
+     fails when a lesson appears in no list.
+  6. Use a reply check to hold back, once, a reply that repeats a writing
+     habit you corrected.
+  7. Have an agent that hasn't seen the work review significant changes
+     and designs.
+  8. Audit lessons, decisions and checks from time to time.
 - **Nine procedures** (`skills/lessons-to-checks/procedures/`):
   record-a-lesson, build-the-check, prove-the-check, map-lessons-to-tasks,
   reply-checks, writing-style, independent-review, periodic-audit and
@@ -368,7 +426,7 @@ I moved the settings to the new file. The old file keeps a copy until you delete
   |---|---|
   | `lessons-template.md` | The lessons file: format, status lines, what counts as a lesson |
   | `guard_shell_habits.py` | PreToolUse hook that refuses shell commands that went wrong before, and says what to do instead |
-  | `reply_checks.py` | Stop hook that stops a reply once when a pattern matches; the second attempt goes through |
+  | `reply_checks.py` | Stop hook that holds back a reply once when a pattern matches; the second attempt goes through |
   | `check_lesson_commit.py` | commit-msg check that refuses a lesson added without a code change (or a `Lesson-fix: none - <why>` line), and a lesson removed |
   | `check_lessons_mapped.py` | Fails for a lesson listed under no procedure |
   | `check_hooks_registered.py` | Fails for a hook script that no settings file names |
@@ -376,19 +434,19 @@ I moved the settings to the new file. The old file keeps a copy until you delete
   | `conftest_run_record.py` | A conftest.py snippet that writes the run record `guard_test_reruns.py` reads, at the end of each full pytest run |
   | `guard_agent_prompts.py` | PreToolUse hook on the Agent tool that refuses an agent prompt missing a line its work needs: whether the agent runs the full test suite (for a prompt that builds or changes code), a scratch subfolder of the agent's own, and no request to start another agent; it says which line to add |
   | `guard_writing_style.py` | PreToolUse hook on Write, Edit and MultiEdit that refuses, once, documentation text with em dashes, negative reassurance, tell words, repeated "X, not Y" contrasts or heavy passive voice; it lists each hit with its line and a fix, and the same call sent again passes |
-  | `settings-example.json` | How the hooks are registered |
+  | `settings-example.json` | Shows how to register the hooks in a settings file |
 
-  Each has a self-test in `templates/selftests/`. Run them all with
-  `python skills/lessons-to-checks/templates/selftests/run_all.py`; the last
-  line reads "ok (all 9 self-tests)". The commit-check and test-run
-  self-tests need `git`; the end-to-end part of the run-record self-test
-  needs `pytest` and says "skip" without it. The hook self-tests share
-  `selftests/hook_io.py`, which sends each hook its input as raw UTF-8
-  bytes with UTF-8 mode off, and runs each hook once behind a strict cp1252
-  console, as on Windows.
+  Each template has a self-test in `templates/selftests/`. To run them
+  all, use `python skills/lessons-to-checks/templates/selftests/run_all.py`;
+  the last line reads "ok (all 9 self-tests)". The commit-check and
+  test-run self-tests need `git`. The end-to-end part of the run-record
+  self-test needs `pytest`, and prints "skip" without it. The hook
+  self-tests share `selftests/hook_io.py`. It sends each hook its input as
+  raw UTF-8 bytes with Python's UTF-8 mode off, and runs each hook once
+  behind a strict cp1252 console, the way Windows runs it.
 
-The plugin adds no hooks of its own to your sessions. You choose which
-templates to copy into a project and register there.
+Installing the plugin adds the skill to your sessions and no hooks. You
+choose which templates to copy into a project and register there.
 
 ## Install
 
@@ -416,14 +474,14 @@ commit check.
    `docs/lessons.md`.
 2. **Write procedures for the tasks the project repeats** (a release, a
    code review, a commit message, a reply), one Markdown file each in
-   `docs/procedures/`. Each ends with a `## Lessons that apply here`
+   `docs/procedures/`. End each one with a `## Lessons that apply here`
    section. The skill's own procedures are a starting point.
 3. **Copy the hooks** you need into `.claude/hooks/` and register them in
-   `.claude/settings.json` (`templates/settings-example.json`). Use the
-   Python command that works on your machine (`python`, `python3` or `py`).
-   For `guard_test_reruns.py`, also copy `templates/conftest_run_record.py`
-   into `tests/conftest.py`, and keep `logs/` and `.claude/logs/` in
-   `.gitignore`.
+   `.claude/settings.json` (`templates/settings-example.json` shows how).
+   Use the Python command that works on your machine (`python`, `python3`
+   or `py`). For `guard_test_reruns.py`, also copy
+   `templates/conftest_run_record.py` into `tests/conftest.py`, and keep
+   `logs/` and `.claude/logs/` in `.gitignore`.
 4. **Install the commit check** as a git hook:
 
    ```
@@ -437,8 +495,8 @@ commit check.
    `docs/lessons.md`.
 5. **Add the two consistency checks to your test suite or CI**:
    `check_lessons_mapped.py --lessons docs/lessons.md --procedures docs/procedures`
-   and `check_hooks_registered.py --hooks .claude/hooks`. Both print "ok"
-   or name what is wrong.
+   and `check_hooks_registered.py --hooks .claude/hooks`. Each prints "ok",
+   or names what is wrong.
 6. **Tell Claude about it** in the project's `CLAUDE.md`:
 
    ```
@@ -449,15 +507,16 @@ commit check.
    ```
 
 7. **Start a new session and prove each hook fires once**, with a harmless
-   input that matches it. Settings are read when a session starts.
+   input that matches it. Claude Code reads its settings when a session
+   starts, so a session that was already open won't run the new hooks.
 
 ## A worked example
 
-A script reported that a nightly job ran at 17:01 local time. It ran at
-12:01. The shell had no time-zone database, so `TZ=America/New_York date`
-printed UTC.
+A script reported that a nightly job ran at 17:01 local time. It actually
+ran at 12:01. The shell had no time-zone database, so
+`TZ=America/New_York date` printed UTC.
 
-**1. The lesson**, added to the top of `docs/lessons.md`:
+**1. The lesson.** Claude adds it to the top of `docs/lessons.md`:
 
 ```
 - **2025-01-14, a script stated the wrong time zone.** A report said a job
@@ -467,8 +526,9 @@ printed UTC.
   clock to use instead. Status: open.
 ```
 
-**2. The check**, an entry in `HABITS` in
-`.claude/hooks/guard_shell_habits.py` (the template already holds it):
+**2. The check.** Claude adds an entry to `HABITS` in
+`.claude/hooks/guard_shell_habits.py` (the template already holds this
+one):
 
 ```python
 (
@@ -481,29 +541,29 @@ printed UTC.
 ),
 ```
 
-Its self-test has one command that must be refused,
-`TZ=America/New_York date`, and a similar one that must pass,
+Its self-test has one command the hook must refuse,
+`TZ=America/New_York date`, and a similar one it must let through,
 `TZ=UTC date`.
 
-**3. The hook registered.** Before the settings name it, the registration
-check says:
+**3. The hook registered.** Until a settings file names the hook, the
+registration check says:
 
 ```
 $ python check_hooks_registered.py
 UNREGISTERED: guard_shell_habits.py is in .claude/hooks but in no settings file
 ```
 
-After adding the `PreToolUse` entry from `templates/settings-example.json`
-to `.claude/settings.json`:
+After Claude adds the `PreToolUse` entry from
+`templates/settings-example.json` to `.claude/settings.json`:
 
 ```
 $ python check_hooks_registered.py
 ok (every hook script is registered)
 ```
 
-**4. The hook refusing, in a new session.** Asked to run
-`TZ=America/New_York date`, Claude gets this back, and the command does not
-run:
+**4. The hook refusing, in a new session.** Claude tries to run
+`TZ=America/New_York date`. The hook stops the command before it runs and
+sends Claude this message:
 
 ```
 PreToolUse:Bash hook error: Refused (named time zone in TZ=): This shell
@@ -513,20 +573,21 @@ local time with a tool that honors the zone, such as Python's zoneinfo
 with the tzdata package installed.
 ```
 
-The hook's log, `.claude/logs/guard_shell_habits.log`, gains a line:
+The hook also adds a line to its log, `.claude/logs/guard_shell_habits.log`:
 
 ```
 2025-01-14 12:00:30	deny	named time zone in TZ=
 ```
 
-**5. The lesson marked fixed**, in place:
+**5. The lesson marked fixed.** Claude changes the entry's status line in
+place:
 
 ```
 Status: fixed 2025-01-14, enforced by .claude/hooks/guard_shell_habits.py
 ("named time zone in TZ="), seen refusing `TZ=America/New_York date`.
 ```
 
-**6. The lesson listed** under the procedures it applies to, such as
+**6. The lesson listed** under each procedure it applies to, such as
 `docs/procedures/scripts.md`:
 
 ```
@@ -538,8 +599,8 @@ Status: fixed 2025-01-14, enforced by .claude/hooks/guard_shell_habits.py
 
 **7. One commit** holds the entry, the hook, its self-test, the settings
 change and the procedure line. The commit check lets it through, because
-a hook changed beside the lesson. The same entry committed alone is
-refused:
+a hook changed alongside the lesson. If Claude commits the entry on its
+own, the commit check refuses it:
 
 ```
 commit refused: This commit adds a lesson to docs/lessons.md (a new entry
@@ -549,8 +610,8 @@ If no check is possible, add the line 'Lesson-fix: none - <why no check
 is possible>'.
 ```
 
-If the mistake happens again, the entry gets a note ("Again 2025-03-02:
-...") and the check gets stronger. The entry is never deleted.
+If the mistake happens again, Claude adds a note to the entry ("Again
+2025-03-02: ...") and makes the check stronger. The entry stays on record.
 
 ## License and commercial use
 
