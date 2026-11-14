@@ -1,0 +1,187 @@
+"""Self-test for guard_test_reruns.py. Run with any Python 3.9+ and git; every
+line says "ok", and the last line is "ok" when all cases pass (exit 0).
+
+It builds a throwaway git repository, writes run records into it the way
+conftest_run_record.py does, and sends the hook the commands a session
+would send."""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+HOOK = HERE.parent / "guard_test_reruns.py"
+sys.path.insert(0, str(HERE.parent))
+sys.dont_write_bytecode = True
+import guard_test_reruns as guard  # noqa: E402
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-c", "user.name=Self Test", "-c", "user.email=selftest@example.invalid",
+                           "-c", "core.autocrlf=false", "-C", str(repo), *args],
+                          capture_output=True, text=True, check=True).stdout
+
+
+def write(repo, rel, text):
+    path = Path(repo) / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def now_iso(hours_ago=0):
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+
+
+def record(repo, **fields):
+    write(repo, guard.RECORD, json.dumps(fields))
+
+
+def hook(tool, command, cwd, log):
+    event = {"tool_name": tool, "tool_input": {"command": command}, "cwd": str(cwd)}
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    env.update(TEST_RERUN_GUARD_LOG=log, PYTHONDONTWRITEBYTECODE="1")
+    out = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(event),
+                         capture_output=True, text=True, env=env)
+    if out.returncode != 0:
+        return "crash", out.stderr
+    if not out.stdout.strip():
+        return "pass", ""
+    spec = json.loads(out.stdout)["hookSpecificOutput"]
+    return spec["permissionDecision"], spec["permissionDecisionReason"]
+
+
+class Run:
+    def __init__(self, log):
+        self.bad = 0
+        self.calls = 0
+        self.log = log
+
+    def expect(self, label, tool, command, cwd, refused, *wanted):
+        decision, reason = hook(tool, command, cwd, self.log)
+        if tool in guard.TOOLS:
+            self.calls += 1
+        ok = (decision == "deny") == refused and decision != "crash" \
+            and all(w in reason for w in wanted)
+        self.bad += not ok
+        print("ok  " if ok else "BAD ", f"{label}: ({tool}) {command}", "" if ok else f"-> {decision}: {reason}")
+
+    def check(self, label, ok, detail=""):
+        self.bad += not ok
+        print("ok  " if ok else "BAD ", label, "" if ok else detail)
+
+
+def main():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        log = str(Path(tmp) / "guard.log")
+        run = Run(log)
+        git(repo, "init", "-q")
+        write(repo, "src/app.py", "TOTAL = 1\n")
+        write(repo, "tests/test_a.py", "def test_one():\n    assert True\n")
+        write(repo, "docs/guide.md", "# Guide\n")
+        write(repo, "README.md", "# Project\n")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "Start")
+        head = git(repo, "rev-parse", "HEAD").strip()
+
+        # (a) The last full run passed on this tree.
+        record(repo, tests=1, seconds=1.0, finished_utc=now_iso(), passed=True,
+               tree=guard.tree_fingerprint(repo))
+        for tool, command in [
+            ("Bash", "pytest"),
+            ("Bash", "python -m pytest -n 4 -q"),
+            ("PowerShell", ".\\.venv\\Scripts\\python.exe -m pytest tests"),
+            ("PowerShell", "& .\\.venv\\Scripts\\python.exe -m pytest -p no:cacheprovider"),
+            ("Bash", "PYTHONDONTWRITEBYTECODE=1 uv run pytest"),
+            ("Bash", "cd docs && pytest .."),
+            ("Bash", "git status; pytest -x"),
+        ]:
+            run.expect("same tree: a full run is refused", tool, command, repo, True,
+                       "same tree", "# full-run-again")
+        for tool, command in [
+            ("Bash", "pytest tests/test_a.py"),
+            ("Bash", "pytest tests/test_a.py::test_one"),
+            ("Bash", "pytest -k invoices"),
+            ("Bash", "pytest -kinvoices"),
+            ("Bash", "pytest --lf"),
+            ("Bash", "pytest docs"),
+            ("Bash", "pytest  # full-run-again"),
+            ("Bash", "echo pytest"),
+            ("Read", "pytest"),
+        ]:
+            run.expect("same tree: a narrowed run, the marker or no run passes", tool, command,
+                       repo, False)
+        write(repo, ".claude/logs/guard_shell_habits.log", "a line\n")
+        write(repo, "src/__pycache__/app.cpython-312.pyc", "bytes\n")
+        run.expect("same tree: a new log or compiled file is no change", "Bash", "pytest", repo, True)
+        write(repo, "src/app.py", "TOTAL = 2\n")
+        run.expect("same tree: a changed program file lets the full run go", "Bash", "pytest",
+                   repo, False)
+        write(repo, "src/app.py", "TOTAL = 1\n")
+        record(repo, tests=1, seconds=1.0, finished_utc=now_iso(), passed=True)
+        run.expect("same tree: a record with no tree (files changed during the run) refuses nothing",
+                   "Bash", "pytest", repo, False)
+
+        # (b) The last full run failed one test.
+        failed_run = dict(tests=2, seconds=1.0, finished_utc=now_iso(), passed=False,
+                          tree=guard.tree_fingerprint(repo), failed=["tests/test_a.py::test_one"],
+                          files=guard.files_against(repo, head))
+        record(repo, **failed_run)
+        run.expect("failed run: nothing changed since, the failed file is named", "Bash", "pytest",
+                   repo, True, "rerun the failed tests only", "`pytest tests/test_a.py`")
+        record(repo, **dict(failed_run, failed=[f"tests/test_a.py::test_{i}" for i in range(21)]))
+        run.expect("failed run: many failures on an unchanged tree are not a passing tree", "Bash",
+                   "pytest", repo, False)
+        record(repo, **failed_run)
+        write(repo, "tests/test_b.py", "def test_two():\n    assert True\n")
+        write(repo, "docs/guide.md", "# Guide, fixed\n")
+        run.expect("failed run: tests and documents changed, the test files are named", "Bash",
+                   "python -m pytest -n 8", repo, True,
+                   "`pytest tests/test_a.py tests/test_b.py`", "docs/guide.md", "# full-run-again")
+        run.expect("failed run: the marker lets a full run through", "Bash",
+                   "python -m pytest -n 8  # full-run-again", repo, False)
+        run.expect("failed run: a narrowed run passes", "Bash", "pytest tests/test_a.py", repo, False)
+        git(repo, "add", "tests", "docs")
+        git(repo, "commit", "-q", "-m", "Fix the test")
+        run.expect("failed run: a commit of only tests and documents still counts", "Bash", "pytest",
+                   repo, True, "tests/test_b.py")
+        write(repo, "src/app.py", "TOTAL = 3\n")
+        run.expect("failed run: a changed program file lets the full run go", "Bash", "pytest",
+                   repo, False)
+        write(repo, "src/app.py", "TOTAL = 1\n")
+        record(repo, **dict(failed_run, finished_utc=now_iso(hours_ago=30)))
+        run.expect("failed run: a run older than MAX_HOURS refuses nothing", "Bash", "pytest",
+                   repo, False)
+        record(repo, **dict(failed_run, failed=[f"tests/test_a.py::test_{i}" for i in range(21)]))
+        run.expect("failed run: more than MAX_FAILED failures refuses nothing", "Bash", "pytest",
+                   repo, False)
+        record(repo, **dict(failed_run, finished_utc=datetime.now().isoformat()))
+        run.expect("failed run: a time with no zone refuses nothing", "Bash", "pytest", repo, False)
+        record(repo, **dict(failed_run, failed=[]))
+        run.expect("failed run: no failed ids refuses nothing", "Bash", "pytest", repo, False)
+
+        # Faults let the command through.
+        write(repo, guard.RECORD, "not json")
+        run.expect("an unreadable record refuses nothing", "Bash", "pytest", repo, False)
+        plain = Path(tmp) / "plain"
+        plain.mkdir()
+        run.expect("outside a git repository nothing is refused", "Bash", "pytest", plain, False)
+        out = subprocess.run([sys.executable, str(HOOK)], input="not json",
+                             capture_output=True, text=True)
+        run.check("unreadable input lets the call through", out.returncode == 0 and not out.stdout.strip())
+
+        lines = Path(log).read_text(encoding="utf-8").splitlines()
+        run.check(f"the log has one line per shell call ({len(lines)} lines)",
+                  len(lines) == run.calls and any("\tdeny\t" in x for x in lines)
+                  and any("\tpass\t" in x for x in lines), f"{len(lines)} != {run.calls}")
+    print("ok" if not run.bad else f"FAILED ({run.bad})")
+    return 1 if run.bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

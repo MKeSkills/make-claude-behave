@@ -1,0 +1,14 @@
+{
+  "name": "lessons-to-checks",
+  "displayName": "Lessons to checks",
+  "version": "0.1.0",
+  "description": "A method for turning every mistake or correction into a lesson with an enforced check: hooks, tests and commit checks that act on their own, proven before a lesson is marked fixed. Procedures plus runnable templates.",
+  "author": {
+    "name": "MKeSkills",
+    "email": "356721182+MKeSkills@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/MKeSkills/lessons-to-checks",
+  "repository": "https://github.com/MKeSkills/lessons-to-checks",
+  "license": "LicenseRef-MIT-Commons-Clause",
+  "keywords": ["lessons", "hooks", "quality", "continuous-improvement", "code-review"]
+}

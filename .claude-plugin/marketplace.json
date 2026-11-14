@@ -1,0 +1,15 @@
+{
+  "name": "lessons-to-checks",
+  "description": "The lessons-to-checks skill: turn each mistake into an enforced check.",
+  "owner": {
+    "name": "MKeSkills",
+    "email": "356721182+MKeSkills@users.noreply.github.com"
+  },
+  "plugins": [
+    {
+      "name": "lessons-to-checks",
+      "source": "./",
+      "description": "Record every mistake as a lesson, build a check that enforces it, prove the check acts, and keep every lesson on record."
+    }
+  ]
+}
