@@ -1,4 +1,4 @@
-# lessons-to-checks
+# Continuous improvement built-in: lessons-to-programmed checks
 
 A Claude Code plugin with one skill: a method for turning every mistake or
 correction into a check that acts on its own.
