@@ -15,7 +15,7 @@ tokens and time" below).
 ## Where it saves tokens and time
 
 A session spends many of its tokens, and much of its time, on work whose
-answer is already known: a test run that repeats the last one, a command
+answer is already known: a test run that repeats successful tests from previous run, a command
 that went wrong before and runs again, or a habit the person has to
 correct a second time. Each mechanism below stops one of these before it
 starts. Every hook logs each time it acts, so the periodic audit can count
