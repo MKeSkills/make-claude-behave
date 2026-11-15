@@ -36,12 +36,17 @@ the session waits only for those.
    the hook (`templates/settings-example.json`). The hook refuses a second
    full run on a tree that already passed one.
 4. **After a full run that failed a few tests, rerun only their files.**
-   When every file changed since that run is a test or a document, program
-   code is as the run saw it. Run the failed tests' files and any test file
-   changed since, not the suite. The same hook refuses the full run and
-   names the files, for example `pytest tests/test_invoices.py`. A comment
-   in the command, `# full-run-again`, lets a needed full run through: a
-   dependency upgraded, a flaky test, or a run asked for by name.
+   When every file changed since that run is a test file (`test_*.py` or
+   `*_test.py`) or a document, program code is as the run saw it. A change
+   to `conftest.py`, a shared test helper or test data can change what
+   every test sees, so it calls for a full run. Run the failed tests'
+   files, each test file changed since, each test file that imports a
+   changed one, and each test file that names a changed document. The same
+   hook refuses the full run and names the files, for example
+   `pytest tests/test_invoices.py`. A comment in the command,
+   `# full-run-again`, lets a needed full run through: a dependency
+   upgraded, a flaky test, a run asked for by name, or a changed document
+   that a test reads through a folder pattern such as `docs/*.md`.
 5. **Run slow tests only when the files they exercise changed.** Tie each
    slow test to the files it runs or reads, in a table the test suite
    checks. Keep a record of the file versions (content hashes) each test

@@ -63,15 +63,26 @@ run, the hook reads that record and refuses the run in two cases:
 - No file has changed since a full run that passed. A new run would give
   the same result.
 - The last full run, in the past 24 hours, failed up to 20 tests, and
-  since then Claude has changed only files in the `tests` and `docs`
-  folders and Markdown files at the top of the project. The program code
-  is exactly what that run tested, so the tests that passed would pass
-  again. Only the tests that failed, and any test file Claude changed,
-  need to run. The hook's refusal names those files.
+  since then Claude has changed only test files (`test_*.py` or
+  `*_test.py` in the `tests` folder), files in the `docs` folder and
+  Markdown files at the top of the project. The program code is exactly
+  what that run tested. The hook's refusal names the test files to run
+  instead:
+  - the files of the tests that failed;
+  - each test file Claude changed;
+  - each test file that imports a changed test file, because it uses that
+    file's helpers or fixtures;
+  - each test file whose text names a changed document, because that test
+    usually reads the document.
 
-When a full run really is needed, for example after a library upgrade,
-Claude adds the comment `# full-run-again` to the command, and the hook
-lets it through.
+  A change to `conftest.py`, a shared test helper or test data can change
+  what every test sees, so the hook lets a full run go after one.
+
+When a full run really is needed, Claude adds the comment
+`# full-run-again` to the command, and the hook lets it through. Two
+examples: a library upgrade, and a change to a document that a test reads
+through a folder pattern such as `docs/*.md`. That test names no single
+document, so the hook cannot tell that it reads the changed one.
 
 **Example.** The last full run failed 2 tests, one in
 `tests/test_invoices.py` and one in `tests/test_export.py`. Claude fixes
@@ -444,7 +455,7 @@ I moved the settings to the new file. The old file keeps a copy until you delete
   | `check_lesson_commit.py` | commit-msg check that refuses a lesson added without a code change (or a `Lesson-fix: none - <why>` line), and a lesson removed |
   | `check_lessons_mapped.py` | Prints `MISSING` for each lesson you haven't listed under a procedure |
   | `check_hooks_registered.py` | Prints `UNREGISTERED` for each hook script missing from your settings files |
-  | `guard_test_reruns.py` | PreToolUse hook that refuses a full test run when no file has changed since a full run that passed, and a full run after the last one failed a few tests when only files in the `tests` and `docs` folders have changed since; it names the test files to run, and `# full-run-again` in the command lets a needed full run through |
+  | `guard_test_reruns.py` | PreToolUse hook that refuses a full test run when no file has changed since a full run that passed, and a full run after the last one failed a few tests when only test files and documents have changed since (a change to `conftest.py` or a test helper lets the full run go); it names the test files to run, including the test files that import a changed test file or name a changed document, and `# full-run-again` in the command lets a needed full run through |
   | `conftest_run_record.py` | A conftest.py snippet that writes the run record `guard_test_reruns.py` reads, at the end of each full pytest run |
   | `guard_agent_prompts.py` | PreToolUse hook on the Agent tool that refuses an agent prompt missing a line its work needs: whether the agent runs the full test suite (for a prompt that builds or changes code), a scratch subfolder of the agent's own, and no request to start another agent; it says which line to add |
   | `guard_writing_style.py` | PreToolUse hook on Write, Edit and MultiEdit that refuses, once, documentation text with em dashes, negative reassurance, tell words, repeated "X, not Y" contrasts or heavy passive voice; it lists each hit with its line and a fix, and the same call sent again passes |

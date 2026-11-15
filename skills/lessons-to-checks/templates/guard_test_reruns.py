@@ -8,9 +8,12 @@ a large share of the session's tokens. Two kinds of full run add nothing:
     run gives the same answer.
 (b) **A few failures, fixed in tests or documents.** The last full run failed
     1 to MAX_FAILED tests, finished less than MAX_HOURS ago, and every file
-    changed since is a test or a document (DOC_OR_TEST). Program code is as
-    the run saw it, so only the failed tests' files, and any test file
-    changed since, need to run. The refusal names them.
+    changed since is a test file or a document (DOC_OR_TEST). Program code
+    is as the run saw it. The refusal names the files to run: the failed
+    tests' files, the test files changed since, the test files that import a
+    changed test file, and the test files whose text names a changed
+    document. A changed `conftest.py`, helper or data file in a test folder
+    can change what every test sees, so it lets the full run go.
 
 A comment with the marker in the command (`pytest  # full-run-again`) lets
 either kind through, for the cases a record cannot see: a dependency
@@ -81,10 +84,20 @@ MARKER = "full-run-again"
 #: How many failed tests still count as "a few", and how old the run may be.
 MAX_FAILED = 20
 MAX_HOURS = 24
-#: Files whose change never needs program code run again. Adjust to your layout.
-DOC_OR_TEST = re.compile(r"^(tests/|docs/)|^[^/]+\.md$")
 #: The test folders: `pytest tests` is a full run, `pytest tests/test_x.py` is not.
 TEST_DIRS = ("tests",)
+#: Documents: files in the docs folder and Markdown files at the top of the
+#: project. Adjust to your layout.
+DOCS = r"^docs/|^[^/]+\.md$"
+#: A test file: `test_*.py` or `*_test.py`, as pytest finds them by default,
+#: in one of TEST_DIRS or a subfolder of one.
+TEST_FILE = re.compile(r"^(?:" + "|".join(re.escape(d.strip("/")) for d in TEST_DIRS)
+                       + r")/(?:.*/)?(?:test_[^/]*|[^/]*_test)\.py$")
+#: Files whose change never needs program code run again: documents, and test
+#: files themselves. Any other file in a test folder, such as `conftest.py`, a
+#: shared helper or test data, can change what every test sees, so it lets
+#: the full run go.
+DOC_OR_TEST = re.compile(DOCS + "|" + TEST_FILE.pattern)
 #: Paths left out of every comparison: logs (this hook's own, the record) and
 #: compiled files.
 SKIPPED = re.compile(r"^(logs/|\.claude/logs/)|(^|/)__pycache__/|\.pyc$")
@@ -121,7 +134,10 @@ RERUN_FAILED = (
     "Refused (rerun the failed tests only): the last full run ({record}, "
     "finished {finished} UTC) failed {count} test(s), and every file changed "
     "since is a test or a document ({changed}). Run only these: "
-    "`pytest {files}`. If program code must run in full anyway, add the "
+    "`pytest {files}`. The list holds the failed tests' files, the changed "
+    "test files, the test files that import a changed test file, and the "
+    "test files that name a changed document. If program code must run in "
+    "full anyway, add the "
     "comment `# {marker}` to the command."
 )
 
@@ -305,6 +321,59 @@ def same_tree(repo: str, record: dict) -> str | None:
                             tests=record.get("tests", "?"), marker=MARKER)
 
 
+def imports(path: str, importer: str, text: str) -> bool:
+    """Whether the test file `importer`, whose text is `text`, imports the
+    test file `path` (`tests/unit/test_x.py`): `from tests.unit.test_x import
+    ...`, `import tests.unit.test_x`, `from tests.unit import test_x`, and,
+    from the same folder, `from .test_x import ...` or `from . import test_x`."""
+    parts = path[:-3].split("/")
+    module = re.escape(".".join(parts))
+    package = re.escape(".".join(parts[:-1]))
+    stem = re.escape(parts[-1])
+    names = r"[ \t]+import[ \t]+(?:\([^)]*|[^\n]*)\b" + stem + r"\b"
+    forms = [r"from[ \t]+" + module + r"[ \t]+import\b",
+             r"import[ \t]+" + module + r"\b",
+             r"from[ \t]+" + package + names]
+    if importer.rsplit("/", 1)[0] == path.rsplit("/", 1)[0]:
+        forms += [r"from[ \t]+\." + stem + r"[ \t]+import\b", r"from[ \t]+\." + names]
+    return re.search(r"^[ \t]*(?:" + "|".join(forms) + ")", text, re.M) is not None
+
+
+def names_document(path: str, text: str) -> bool:
+    """Whether a test file's text names the document `path` by its file name.
+    Its path from the project's top folder ends with that name, so the path
+    counts too."""
+    name = re.escape(path.rsplit("/", 1)[-1])
+    return re.search(r"(?<![\w.-])" + name + r"(?![\w-])", text) is not None
+
+
+def affected_tests(repo: str, changed: list[str]) -> set[str]:
+    """The test files a change to these test files and documents can break,
+    besides the changed test files themselves: a test file that imports a
+    changed or deleted test file (a helper or fixture defined there), and a
+    test file whose text names a changed document (a test that reads it).
+    One level only: a test file that imports an importer is not added. A
+    test that reads a whole folder by a glob pattern is not found; the
+    marker lets the full run go then."""
+    tests = [p for p in changed if TEST_FILE.search(p)]
+    docs = [p for p in changed if not TEST_FILE.search(p)]
+    found: set[str] = set()
+    for folder in TEST_DIRS:
+        root = Path(repo) / folder
+        for file in (root.rglob("*.py") if root.is_dir() else ()):
+            importer = file.relative_to(repo).as_posix()
+            if not TEST_FILE.search(importer):
+                continue
+            try:
+                text = file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if any(p != importer and imports(p, importer, text) for p in tests) \
+                    or any(names_document(p, text) for p in docs):
+                found.add(importer)
+    return found
+
+
 def rerun_failed(repo: str, record: dict, now: datetime | None = None) -> str | None:
     """(b) the last full run failed a few tests, recently, and only tests or
     documents changed since."""
@@ -327,8 +396,11 @@ def rerun_failed(repo: str, record: dict, now: datetime | None = None) -> str | 
     if any(not DOC_OR_TEST.search(p) for p in changed):
         return None
     targets = {str(n).split("::")[0] for n in failed}
-    targets |= {p for p in changed if Path(p).name.startswith("test_") and p.endswith(".py")
-                and current.get(p) != "deleted"}
+    # A file the run saw that is gone now is either "deleted" (it is in the
+    # run's commit) or missing from the list (it was new then): name neither.
+    targets |= {p for p in changed if TEST_FILE.search(p)
+                and current.get(p) not in (None, "deleted")}
+    targets |= affected_tests(repo, changed)
     return RERUN_FAILED.format(record=RECORD, finished=record["finished_utc"],
                                count=len(failed), changed=", ".join(changed) or "none",
                                files=" ".join(sorted(targets)), marker=MARKER)

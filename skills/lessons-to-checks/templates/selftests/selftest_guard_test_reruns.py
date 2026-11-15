@@ -167,6 +167,96 @@ def main():
         run.expect("failed run: a changed program file lets the full run go", "Bash", "pytest",
                    repo, False)
         write(repo, "src/app.py", "TOTAL = 1\n")
+        for shared, text in [("tests/conftest.py", "import pytest\n"),
+                             ("tests/helpers.py", "VALUE = 1\n"),
+                             ("tests/data/invoice.json", "{}\n")]:
+            write(repo, shared, text)
+            run.expect(f"failed run: a changed {shared} (it can change every test) lets the full "
+                       "run go", "Bash", "pytest", repo, False)
+            (repo / shared).unlink()
+        write(repo, "tests/unit/invoice_test.py", "def test_three():\n    assert True\n")
+        run.expect("failed run: a test file in a subfolder still counts as a test", "Bash", "pytest",
+                   repo, True, "`pytest tests/test_a.py tests/test_b.py tests/unit/invoice_test.py`")
+        (repo / "tests/unit/invoice_test.py").unlink()
+
+        def fresh_failed_record():
+            record(repo, **dict(failed_run, files=guard.files_against(repo, head)))
+
+        # A changed test file can break the test files that import it.
+        for shared, user, text in [
+            ("tests/test_shared.py", "tests/test_user.py", "from tests.test_shared import helper\n"),
+            ("tests/test_shared.py", "tests/test_user.py", "import tests.test_shared as shared\n"),
+            ("tests/test_shared.py", "tests/test_user.py", "from tests import test_shared\n"),
+            ("tests/test_shared.py", "tests/test_user.py",
+             "from tests import (\n    test_other,\n    test_shared,\n)\n"),
+            ("tests/test_shared.py", "tests/test_user.py",
+             "def test_two():\n    from tests.test_shared import db\n"),
+            ("tests/unit/shared_test.py", "tests/test_user.py",
+             "from tests.unit.shared_test import helper\n"),
+            ("tests/unit/shared_test.py", "tests/unit/test_user.py",
+             "from .shared_test import helper\n"),
+            ("tests/unit/shared_test.py", "tests/unit/test_user.py", "from . import shared_test\n"),
+        ]:
+            write(repo, shared, "def helper():\n    return 1\n")
+            write(repo, user, text)
+            fresh_failed_record()
+            write(repo, shared, "def helper():\n    return 2\n")
+            files = " ".join(sorted({"tests/test_a.py", shared, user}))
+            run.expect(f"failed run: {user} imports the changed {shared} ({text.splitlines()[0]})",
+                       "Bash", "pytest", repo, True, f"`pytest {files}`")
+            (repo / shared).unlink()
+            (repo / user).unlink()
+        for text in ["from tests.test_shared_more import helper\n",
+                     "NAME = 'from tests.test_shared import helper'\n",
+                     "from .test_shared import helper\n"]:
+            write(repo, "tests/test_shared.py", "def helper():\n    return 1\n")
+            write(repo, "tests/unit/test_user.py", text)
+            fresh_failed_record()
+            write(repo, "tests/test_shared.py", "def helper():\n    return 2\n")
+            run.expect(f"failed run: a file that does not import the changed one is left out "
+                       f"({text.strip()})", "Bash", "pytest", repo, True,
+                       "`pytest tests/test_a.py tests/test_shared.py`")
+            (repo / "tests/test_shared.py").unlink()
+            (repo / "tests/unit/test_user.py").unlink()
+        write(repo, "tests/test_shared.py", "def helper():\n    return 1\n")
+        write(repo, "tests/test_user.py", "from tests.test_shared import helper\n")
+        git(repo, "add", "tests")
+        git(repo, "commit", "-q", "-m", "Shared helper")
+        fresh_failed_record()
+        (repo / "tests/test_shared.py").unlink()
+        run.expect("failed run: a test file that imports a deleted one is named", "Bash", "pytest",
+                   repo, True, "`pytest tests/test_a.py tests/test_user.py`")
+        git(repo, "rm", "-q", "--cached", "tests/test_shared.py")
+        git(repo, "rm", "-q", "tests/test_user.py")
+        git(repo, "commit", "-q", "-m", "Remove the shared helper")
+
+        # A changed document can break the tests that read it.
+        for doc, text in [("docs/guide.md", "DOC = ROOT / 'docs' / 'guide.md'\n"),
+                          ("docs/guide.md", "DOC = 'docs/guide.md'\n"),
+                          ("README.md", "TEXT = (ROOT / 'README.md').read_text()\n")]:
+            write(repo, "tests/test_reads.py", text)
+            write(repo, "tests/test_other.py", "DOC = 'docs/index-guide.md'\n")
+            fresh_failed_record()
+            write(repo, doc, (repo / doc).read_text(encoding="utf-8") + "More.\n")
+            run.expect(f"failed run: a test file that names the changed {doc} is named", "Bash",
+                       "pytest", repo, True, "`pytest tests/test_a.py tests/test_reads.py`")
+            (repo / "tests/test_reads.py").unlink()
+            (repo / "tests/test_other.py").unlink()
+
+        # The test folders are a setting: the test-file pattern follows it.
+        source = HOOK.read_text(encoding="utf-8")
+        variant = {"__name__": "guard_variant"}
+        setting = 'TEST_DIRS = ("tests",)'
+        exec(compile(source.replace(setting, 'TEST_DIRS = ("checks",)'), str(HOOK), "exec"), variant)
+        run.check("TEST_DIRS decides which paths are test files",
+                  source.count(setting) == 1
+                  and variant["DOC_OR_TEST"].search("checks/test_x.py") is not None
+                  and variant["DOC_OR_TEST"].search("tests/test_x.py") is None
+                  and variant["TEST_FILE"].search("checks/unit/x_test.py") is not None)
+        run.check("a test-shaped name outside the test folders is no test file",
+                  guard.TEST_FILE.search("docs/test_tool.py") is None
+                  and guard.TEST_FILE.search("src/test_app.py") is None)
+        record(repo, **failed_run)
         record(repo, **dict(failed_run, finished_utc=now_iso(hours_ago=30)))
         run.expect("failed run: a run older than MAX_HOURS refuses nothing", "Bash", "pytest",
                    repo, False)
