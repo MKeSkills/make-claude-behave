@@ -475,19 +475,41 @@ choose which templates to copy into a project and register there.
 
 ## Install
 
-In Claude Code:
+There are two ways to install the skill.
+
+**As a Claude Code plugin.** Type these two commands in Claude Code. The
+skill is then available in every project you open:
 
 ```
 /plugin marketplace add MKeSkills/make-claude-behave
 /plugin install lessons-to-checks@make-claude-behave
 ```
 
+**With the skills installer.** Run this command in a terminal, from the
+project's folder:
+
+```
+npx skills add MKeSkills/make-claude-behave
+```
+
+It needs Node.js. It installs the skill into the folder you run it from,
+so the skill is available only in that project. It also installs the
+skill for other coding agents it finds, such as Codex and Cursor, and
+adds a small record file, `skills-lock.json`. Run it from the folder of
+the project that should have the skill.
+
 Claude uses the skill when a task matches it ("this happened again",
 "record a lesson", "set up lessons and checks here"). You can also call it
-by name, with a procedure as the argument:
+by name, with a procedure as the argument. After a plugin install:
 
 ```
 /lessons-to-checks:lessons-to-checks record-a-lesson
+```
+
+After an install with the skills installer:
+
+```
+/lessons-to-checks record-a-lesson
 ```
 
 Requirements: Python 3.9 or later for the templates, and `git` for the
