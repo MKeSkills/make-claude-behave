@@ -79,7 +79,7 @@ run, the hook reads that record and refuses the run in two cases:
   what every test sees, so the hook lets a full run go after one.
 
 When a full run really is needed, Claude adds the comment
-`# full-run-again` to the command, and the hook lets it through. Two
+`# full-run-again` to the command, and the hook lets it through. This token optimization is not to be confused with the need for a comprehensive regresstion test suite that should be tested prior to every release. Two
 examples: a library upgrade, and a change to a document that a test reads
 through a folder pattern such as `docs/*.md`. That test names no single
 document, so the hook cannot tell that it reads the changed one.
