@@ -48,22 +48,30 @@ respond.
 `guard_test_reruns.py`, with `conftest_run_record.py`.
 
 **Without the check.** A full run of a large test suite can take many
-minutes. The session waits for it to finish, and its output takes up room
-in the conversation, which Claude pays for in tokens on every later turn.
-Sessions often start another full run that can only repeat what the last
-one said. Either the files haven't changed since a run that passed, or
-Claude fixed the one or two tests that failed and wants to confirm the
-fix.
+minutes. The session waits until it finishes, and its output stays in the
+conversation, where Claude pays for it in tokens on every later turn.
+Claude often starts a second full run that can't tell it anything new.
+Two cases come up again and again. In the first, no file has changed since
+a full run that passed. In the second, a full run failed one or two tests,
+and Claude has since changed only those tests to fix them.
 
 **With the check.** The conftest snippet writes a short record at the end
 of every full run: whether the run passed, the commit and uncommitted
 changes it ran on, and the tests that failed. Before Claude starts a full
-run, the hook reads that record. If the files match a run that passed, the
-hook refuses the new run. If the last run failed a few tests and only test
-files or documents have changed since, the hook also refuses the full run,
-and names the test files Claude should run instead. When a full run really
-is needed, Claude adds the comment `# full-run-again` to the command, and
-the hook lets it through.
+run, the hook reads that record and refuses the run in two cases:
+
+- No file has changed since a full run that passed. A new run would give
+  the same result.
+- The last full run, in the past 24 hours, failed up to 20 tests, and
+  since then Claude has changed only files in the `tests` and `docs`
+  folders and Markdown files at the top of the project. The program code
+  is exactly what that run tested, so the tests that passed would pass
+  again. Only the tests that failed, and any test file Claude changed,
+  need to run. The hook's refusal names those files.
+
+When a full run really is needed, for example after a library upgrade,
+Claude adds the comment `# full-run-again` to the command, and the hook
+lets it through.
 
 **Example.** The last full run failed 2 tests, one in
 `tests/test_invoices.py` and one in `tests/test_export.py`. Claude fixes
@@ -78,11 +86,11 @@ instead of the whole suite's.
 `guard_agent_prompts.py`.
 
 **Without the check.** Claude often splits a change among several builder
-agents that work at the same time, each on one part. If their prompts say
-nothing about testing, each agent runs the full suite on its own part.
-Only the final run on the combined changes tells you whether the parts
-work together, and that run has to happen anyway, so the agents' own full
-runs add nothing. They also compete for the same processor and memory, so
+agents that work at the same time, each on one part. If their prompts don't
+mention testing, each agent runs the full suite on its own part. Only the
+final run on the combined changes tells you whether the parts work
+together, and that run has to happen anyway, so the agents' own full runs
+are wasted work. They also compete for the same processor and memory, so
 every agent finishes later. A second waste: Claude sometimes asks an agent
 to start a review agent of its own, and a background agent may be unable
 to. The agent reports back that it couldn't, and the main session starts
@@ -149,41 +157,47 @@ that turn read the clock. The hook holds the reply back. Claude reads the
 clock and corrects the time. You read one reply, with the right time in
 it, and write no correction.
 
-### A fix that exists only on paper
+### Making sure each lesson is codified and checked
 
 `check_lesson_commit.py`, `check_hooks_registered.py` and
 `check_lessons_mapped.py`.
 
-**Without the check.** A lesson kept only as a note gets missed at the
-moment it matters. Each time the mistake repeats, you pay for it again:
-the mistake itself, the time to work out its cause a second time, the
-correction, the rework and the test run after it. Two quieter gaps cost
-the same way. A hook that someone built and tested but never named in a
-settings file never runs, so the mistake repeats while the lesson says
-"fixed". A lesson that no procedure lists stays unread when its task comes
-up.
+**Without the check.** Claude tends to overlook a lesson kept only as a
+note at the moment it matters. Each time the mistake repeats, you pay for
+it again: the mistake itself, the time to work out its cause a second
+time, the correction, the rework and the test run after it. Two more gaps
+cost the same way:
+
+- Claude Code runs only the hooks that a settings file lists. A hook can
+  pass all its own tests and still sit idle because you never added it to
+  a settings file. The lesson says "fixed", and the mistake keeps coming
+  back.
+- Before a task, Claude reads the lessons listed under that task's
+  procedure. If you forget to list a lesson under a procedure, Claude has
+  no reason to read it when that task comes up.
 
 **With the check.**
 
-- `check_lesson_commit.py` refuses a commit that adds a lesson without
-  changing a hook, test, script or other code, unless the commit message
-  explains why no check is possible. Claude builds the fix the first time
-  the mistake happens, so the next occurrence meets a refusal at once, and
+- `check_lesson_commit.py` refuses a commit that adds a lesson but changes
+  no hook, test, script or other code, unless the commit message explains
+  why no check is possible. Claude has to build the fix the first time the
+  mistake happens. The next time, the check stops the mistake at once, and
   nobody has to work out its cause again.
-- `check_hooks_registered.py` prints `UNREGISTERED` for each hook script
-  that no settings file names.
-- `check_lessons_mapped.py` prints `MISSING` for each lesson that no
-  procedure lists.
+- `check_hooks_registered.py` looks for each hook script in your settings
+  files. When it can't find one, it prints `UNREGISTERED` and the script's
+  name.
+- `check_lessons_mapped.py` looks for each lesson in the "Lessons that
+  apply here" sections of your procedures. When it can't find one, it
+  prints `MISSING` and the lesson's date and name.
 
 **Example.** You copy `guard_shell_habits.py` into `.claude/hooks/` and
-its self-test passes, but `.claude/settings.json` doesn't name it, so
-Claude Code never runs it. The registration check prints
-`UNREGISTERED: guard_shell_habits.py is in .claude/hooks but in no
-settings file`. One command shows you the gap, before a session relies on
-a hook that never runs and someone has to work out why the mistake came
-back.
+its self-test passes, but you forget to add it to `.claude/settings.json`.
+The registration check prints `UNREGISTERED: guard_shell_habits.py is in
+.claude/hooks but in no settings file`. One command shows you the gap
+before you rely on the hook, and saves you working out later why the
+mistake came back.
 
-### A document you have to rewrite
+### Avoiding LLM-speak in documents
 
 `guard_writing_style.py`.
 
@@ -406,8 +420,8 @@ I moved the settings to the new file. The old file keeps a copy until you delete
      For a hook, that means a settings file names it and you have seen it
      fire in a session.
   4. Never delete a lesson. Mark it fixed or canceled.
-  5. List each lesson under every task procedure it applies to. A test
-     fails when a lesson appears in no list.
+  5. List each lesson under every task procedure it applies to. A check
+     fails when you forget to list a lesson.
   6. Use a reply check to hold back, once, a reply that repeats a writing
      habit you corrected.
   7. Have an agent that hasn't seen the work review significant changes
@@ -428,9 +442,9 @@ I moved the settings to the new file. The old file keeps a copy until you delete
   | `guard_shell_habits.py` | PreToolUse hook that refuses shell commands that went wrong before, and says what to do instead |
   | `reply_checks.py` | Stop hook that holds back a reply once when a pattern matches; the second attempt goes through |
   | `check_lesson_commit.py` | commit-msg check that refuses a lesson added without a code change (or a `Lesson-fix: none - <why>` line), and a lesson removed |
-  | `check_lessons_mapped.py` | Fails for a lesson listed under no procedure |
-  | `check_hooks_registered.py` | Fails for a hook script that no settings file names |
-  | `guard_test_reruns.py` | PreToolUse hook that refuses a full test run on a tree that already passed one, and a full run after a few failures when only tests or documents changed since; it names the test files to run, and `# full-run-again` in the command lets a needed full run through |
+  | `check_lessons_mapped.py` | Prints `MISSING` for each lesson you haven't listed under a procedure |
+  | `check_hooks_registered.py` | Prints `UNREGISTERED` for each hook script missing from your settings files |
+  | `guard_test_reruns.py` | PreToolUse hook that refuses a full test run when no file has changed since a full run that passed, and a full run after the last one failed a few tests when only files in the `tests` and `docs` folders have changed since; it names the test files to run, and `# full-run-again` in the command lets a needed full run through |
   | `conftest_run_record.py` | A conftest.py snippet that writes the run record `guard_test_reruns.py` reads, at the end of each full pytest run |
   | `guard_agent_prompts.py` | PreToolUse hook on the Agent tool that refuses an agent prompt missing a line its work needs: whether the agent runs the full test suite (for a prompt that builds or changes code), a scratch subfolder of the agent's own, and no request to start another agent; it says which line to add |
   | `guard_writing_style.py` | PreToolUse hook on Write, Edit and MultiEdit that refuses, once, documentation text with em dashes, negative reassurance, tell words, repeated "X, not Y" contrasts or heavy passive voice; it lists each hit with its line and a fix, and the same call sent again passes |
