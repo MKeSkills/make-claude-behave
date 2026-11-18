@@ -498,6 +498,13 @@ skill for other coding agents it finds, such as Codex and Cursor, and
 adds a small record file, `skills-lock.json`. Run it from the folder of
 the project that should have the skill.
 
+To make the skill available in every project instead, add `-g`. The
+installer then installs it for your user, not for one project:
+
+```
+npx skills add MKeSkills/make-claude-behave -g
+```
+
 Claude uses the skill when a task matches it ("this happened again",
 "record a lesson", "set up lessons and checks here"). You can also call it
 by name, with a procedure as the argument. After a plugin install:
